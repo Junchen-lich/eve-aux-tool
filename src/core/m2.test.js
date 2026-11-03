@@ -56,7 +56,13 @@ for (const key of SERVER_ORDER) {
 ok(SERVERS.tranquility.ssoAuthorizeMethod === "GET", "欧服用 GET 授权（可直接跳转）");
 ok(SERVERS.serenity.ssoAuthorizeMethod === "GET", "国服晨曦用 GET 授权（浏览器实测可跳转）");
 ok(SERVERS.shuguang.ssoAuthorizeMethod === "GET", "国服曙光用 GET 授权");
-ok(SERVERS.serenity.ssoAuthorize === SERVERS.shuguang.ssoAuthorize, "晨曦与曙光共用国服 SSO 域名");
+// ★ 曙光服有**独立的登录集群**（实测 2026-11-03）：
+//   晨曦 login.evepc.163.com，曙光 login-infinity.evepc.163.com —— 两者账号体系独立。
+//   此前误以为两服共用域名，已修正。
+ok(SERVERS.serenity.ssoAuthorize.includes("login.evepc.163.com"), "晨曦用 login 集群");
+ok(SERVERS.shuguang.ssoAuthorize.includes("login-infinity.evepc.163.com"), "★ 曙光用独立的 login-infinity 集群");
+ok(SERVERS.serenity.ssoToken !== SERVERS.shuguang.ssoToken, "★ 两服的 token 端点也相互独立");
+ok(SERVERS.serenity.ssoAuthorize !== SERVERS.shuguang.ssoAuthorize, "★ 两服授权端点不相同");
 
 /* ---------------- 授权 URL 构造 ---------------- */
 section("【授权 URL 构造】");

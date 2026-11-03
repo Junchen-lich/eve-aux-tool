@@ -14,7 +14,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { AuthManager, explainAuthError } = require("./auth.js");
+const { AuthManager, explainAuthError, isOfficialClientId, OFFICIAL_CN_CLIENT_ID, OFFICIAL_CN_REDIRECT_URI } = require("./auth.js");
 
 let pass = 0, fail = 0;
 function ok(cond, label, detail) {
@@ -38,8 +38,8 @@ function loadServerHelpers() {
   return {
     defaultRedirectUri: fn("", 8657),
     // 官方公共 ID 与其唯一登记的回调地址
-    OFFICIAL_CN_CLIENT_ID: "bc90aa496a404724a93f41b4f4e97761",
-    OFFICIAL_CN_REDIRECT_URI: "https://esi.evepc.163.com/ui/oauth2-redirect.html"
+    OFFICIAL_CN_CLIENT_ID: OFFICIAL_CN_CLIENT_ID,
+    OFFICIAL_CN_REDIRECT_URI: OFFICIAL_CN_REDIRECT_URI
   };
 }
 
@@ -170,7 +170,7 @@ section("【AuthManager 分服构造】");
   ok(u.searchParams.get("redirect_uri") === "http://localhost:8657/sso/callback", "授权 URL 带上本服的回调地址");
   ok(u.searchParams.get("code_challenge_method") === "S256", "使用 PKCE S256");
   ok(u.origin + u.pathname === "https://login.evepc.163.com/v2/oauth/authorize/", "国服授权端点正确");
-  ok(u.searchParams.get("realm") === "esi", "国服必填 realm 已带上");
+  ok(u.searchParams.get("realm") === "ESI", "国服必填 realm 已带上");
 }
 
 /* ---------------- 8. scope 上限仍按服生效 ---------------- */
@@ -187,8 +187,145 @@ section("【scope 数量上限】");
   ok(!!okAu.url, "欧服 scope 无上限限制");
 }
 
+/* ---------------- 9. 手动授权通道（公共 Client ID） ---------------- */
+section("【手动授权通道】");
+
+/**
+ * 手动通道涉及网络与异步解析，整段放进 async 函数并在末尾 await，
+ * 否则进程会在断言执行完之前就退出 —— 表现为「测试静默跳过」。
+ */
+async function testManualChannel() {
+  const a = new AuthManager({
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    redirectUri: OFFICIAL_CN_REDIRECT_URI
+  });
+
+  // 9a. 生成授权链接（授权码流程）
+  const au = a.buildManualAuthorize("shuguang", ["esi-skills.read_skills.v1"], {
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    redirectUri: OFFICIAL_CN_REDIRECT_URI,
+    usePkce: true
+  });
+  const u = new URL(au.url);
+  ok(au.mode === "code", "授权码流程 mode=code");
+  ok(u.searchParams.get("client_id") === OFFICIAL_CN_CLIENT_ID, "链接带公共 Client ID");
+  ok(u.searchParams.get("redirect_uri") === OFFICIAL_CN_REDIRECT_URI, "链接带官方落地页回调地址");
+  ok(u.searchParams.get("code_challenge") && u.searchParams.get("code_challenge_method") === "S256",
+    "授权码流程带 PKCE S256");
+  ok(u.searchParams.get("realm") === "ESI", "带国服必填 realm");
+  ok(u.searchParams.get("device_id"), "带 device_id");
+  ok(u.host === "login-infinity.evepc.163.com", "★ 曙光走独立的 login-infinity 集群", u.host);
+
+  // 9b. 晨曦走 login 集群
+  const au2 = a.buildManualAuthorize("serenity", ["esi-skills.read_skills.v1"], {
+    clientId: OFFICIAL_CN_CLIENT_ID, usePkce: true
+  });
+  ok(new URL(au2.url).host === "login.evepc.163.com", "★ 晨曦走 login 集群");
+
+  // 9c. 隐式流程（不需 PKCE）
+  const au3 = a.buildManualAuthorize("shuguang", ["esi-skills.read_skills.v1"], {
+    clientId: OFFICIAL_CN_CLIENT_ID, usePkce: false
+  });
+  const u3 = new URL(au3.url);
+  ok(au3.mode === "token", "隐式流程 mode=token");
+  ok(u3.searchParams.get("response_type") === "token", "response_type=token");
+  ok(!u3.searchParams.get("code_challenge"), "隐式流程不带 code_challenge");
+
+  // 9d. 粘贴解析：隐式流程
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eve-manual-"));
+  const b = new AuthManager({
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    redirectUri: OFFICIAL_CN_REDIRECT_URI,
+    store: new (require("./user-store.js").UserSpace)({ salt: "s", singleUser: true, baseDir: tmpDir }).store("local")
+  });
+  const out = await (b.completeManual(
+    "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html#access_token=FAKE.TOKEN.VALUE&expires_in=1200&token_type=Bearer",
+    "shuguang"
+  ));
+  ok(out.rec.source === "manual-implicit", "隐式流程被正确识别");
+  ok(out.rec.accessToken === "FAKE.TOKEN.VALUE", "令牌已取出");
+  ok(!!out.warning && out.warning.includes("不签发 refresh_token"), "提示了无 refresh_token 的后果");
+  ok(out.warning.includes("保留在本地"), "★ 提示了数据会保留在本地");
+
+  // 9e. 粘贴解析：裸片段
+  const b2 = new AuthManager({
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    store: new (require("./user-store.js").UserSpace)({ salt: "s2", singleUser: true, baseDir: tmpDir }).store("local")
+  });
+  const out2 = await (b2.completeManual("#access_token=BARE.TOKEN&expires_in=1200", "serenity"));
+  ok(out2.rec.source === "manual-implicit", "裸片段也能解析");
+
+  // 9f. 粘贴解析：上游 JSON 错误
+  const b3 = new AuthManager({ clientId: OFFICIAL_CN_CLIENT_ID });
+  let errMsg = "";
+  try {
+    await (b3.completeManual('{"error":"invalid_request","error_description":"redirect mismatch"}', "shuguang"));
+  } catch (e) { errMsg = e.message; }
+  ok(errMsg.includes("redirect mismatch"), "上游 JSON 错误被原样报出", errMsg.slice(0, 40));
+
+  // 9g. 空内容
+  let err2 = "";
+  try { await (b3.completeManual("", "shuguang")); } catch (e) { err2 = e.message; }
+  ok(err2.includes("请粘贴"), "空内容给出明确提示");
+
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { }
+}
+
+/* ---------------- 10. 令牌过期后数据保留 ---------------- */
+section("【令牌过期后数据保留】");
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eve-expire-"));
+  const { UserSpace } = require("./user-store.js");
+  const { ProfileStore } = require("./profiles.js");
+  const us = new UserSpace({ salt: "exp", singleUser: true, baseDir: tmpDir });
+  const store = us.store("local");
+
+  // 与 server.js 的 profilesFor 一致的构造方式
+  const ps = new ProfileStore({
+    file: store.profilesFile,
+    persist: (p) => store.saveProfiles(p)
+  });
+  ps.profiles = store.profiles();
+  ps.save({
+    serverKey: "shuguang", characterId: 12345, characterName: "测试角色",
+    skills: { ind: 5, acct: 3, met: 4 },
+    totalSP: 12345, syncedAt: Date.now()
+  });
+
+  // 令牌过期（模拟 20 分钟后）
+  store.saveTokens({
+    "shuguang:12345": {
+      serverKey: "shuguang", characterId: 12345,
+      accessToken: "EXPIRED", expiresAt: Date.now() - 1000
+    }
+  });
+
+  // 模拟服务重启后重新加载
+  const store2 = us.store("local");
+  const ps2 = new ProfileStore({
+    file: store2.profilesFile,
+    persist: (p) => store2.saveProfiles(p)
+  });
+  ps2.profiles = store2.profiles();
+  const list = ps2.list();
+
+  ok(list.length === 1, "档案在令牌过期 + 重启后仍存在", list.length + " 条");
+  ok(list[0] && list[0].skills && Object.keys(list[0].skills).length === 3,
+    "★ 技能数据完整保留", JSON.stringify(list[0] && list[0].skills));
+  ok(list[0] && list[0].characterName === "测试角色", "角色名保留");
+
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { }
+}
+
 /* ------------------------------------------------------------------ */
-console.log("\n====================================================");
-console.log("通过 " + pass + " 项，失败 " + fail + " 项");
-console.log("====================================================");
-process.exit(fail === 0 ? 0 : 1);
+testManualChannel()
+  .catch(function (e) {
+    console.error("  FAIL 手动授权通道抛出异常 → " + (e && e.message ? e.message : e));
+    fail++;
+  })
+  .then(function () {
+    console.log("\n====================================================");
+    console.log("通过 " + pass + " 项，失败 " + fail + " 项");
+    console.log("====================================================");
+    process.exit(fail === 0 ? 0 : 1);
+  });

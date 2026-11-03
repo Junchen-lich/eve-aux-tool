@@ -33,7 +33,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { AuthManager } = require("./src/core/auth.js");
+const { AuthManager, isOfficialClientId, OFFICIAL_CN_CLIENT_ID, OFFICIAL_CN_REDIRECT_URI } = require("./src/core/auth.js");
 const { ProfileStore } = require("./src/core/profiles.js");
 const { EsiClient } = require("./src/core/esi-client.js");
 const fetcher = require("./src/data/fetcher.js");
@@ -159,22 +159,22 @@ function currentUser(req) {
 }
 
 /**
- * 网易官方公共 ESI 应用的 Client ID。
+ * 网易官方公共 ESI 应用的 Client ID 与回调地址。
  *
- * ★ 这个 ID 是网易自己注册给 esi.evepc.163.com 用的，
+ * ★ 这个 ID 是网易自己注册给 ESI 官网用的，
  *   它在后台登记的回调地址固定为
- *   https://esi.evepc.163.com/ui/oauth2-redirect.html
- *   —— 用它做本地工具的授权时，登录后必然被判定
+ *   https://ali-esi.evepc.163.com/ui/oauth2-redirect.html
+ *   —— 用它做「自动跳回本地」的标准流程必然被判定
  *   「The redirect URL does not match any of the configured values for this client」。
- *   唯一可行的用法是把该地址填进工具的「设置」页，
- *   授权后从浏览器地址栏取回 token（落地页会带上 #access_token=...）。
+ *
+ *   可行用法是**手动授权通道**（见 apiManualAuthLink / apiManualAuth）：
+ *   在浏览器里用官方落地页完成授权，再把地址栏的回调 URL 粘回工具。
+ *
+ *   ★ 实测（2026-11-03）：不带 ali- 前缀的 esi.evepc.163.com 稳定返回 503，
+ *     只有 ali-esi.evepc.163.com 返回 200 —— 第三方教程里流传的旧地址已失效。
+ *
+ * 常量统一从 src/core/auth.js 引入，此处不再重复定义。
  */
-const OFFICIAL_CN_CLIENT_ID = "bc90aa496a404724a93f41b4f4e97761";
-const OFFICIAL_CN_REDIRECT_URI = "https://esi.evepc.163.com/ui/oauth2-redirect.html";
-
-function isOfficialClientId(clientId) {
-  return String(clientId || "").trim().toLowerCase() === OFFICIAL_CN_CLIENT_ID;
-}
 
 /**
  * 按服务器解析应用凭据。
@@ -249,11 +249,14 @@ function persistAuth(user, auth) {
 }
 
 function profilesFor(user) {
-  const ps = new ProfileStore();
+  // ★ 档案必须按用户隔离：ProfileStore 默认读全局文件，
+  //   多用户模式下会让所有人共用一份角色档案 —— 显式传入该用户自己的路径，
+  //   并把持久化出口指向该用户的存储。
+  const ps = new ProfileStore({
+    file: user.store.profilesFile,
+    persist: function (profiles) { user.store.saveProfiles(profiles); }
+  });
   ps.profiles = user.store.profiles();
-  ps.save = function () {
-    try { user.store.saveProfiles(this.profiles); } catch (e) { }
-  };
   return ps;
 }
 
@@ -540,6 +543,106 @@ async function apiSync(req, res, user, auth, profiles) {
 /** GET /api/profiles —— 角色档案列表（前台中文展示） */
 function apiProfiles(req, res, profiles) {
   sendJSON(res, { ok: true, profiles: profiles.list() });
+}
+
+/* ------------------------------------------------------------------ *
+ * 手动授权通道（网易官方公共 Client ID）
+ *
+ * ★ 场景：网易官方公共 Client ID 只登记了官方落地页作为回调地址，
+ *   本地工具无法自动跳回，只能让用户在浏览器完成授权后
+ *   把地址栏的回调 URL 粘回来，由工具拿 code 换令牌。
+ *   —— 与 raoganzi.com 的做法一致。
+ * ------------------------------------------------------------------ */
+
+/**
+ * GET /api/auth/manual?server=shuguang&scope=a,b&mode=code
+ *   生成授权链接（mode=code 授权码流程 / mode=token 隐式流程）
+ */
+function apiManualAuthLink(req, res, user, q) {
+  const serverKey = q.server || "serenity";
+  if (!SERVERS[serverKey]) return sendJSON(res, { ok: false, error: "未知服务器" }, 400);
+  const scopes = (q.scope || "esi-skills.read_skills.v1").split(",").map(s => s.trim()).filter(Boolean);
+  const mode = q.mode === "token" ? "token" : "code";
+
+  try {
+    const auth = authFor(user, serverKey);
+    const info = auth.buildManualAuthorize(serverKey, scopes, {
+      clientId: auth.clientId,
+      redirectUri: OFFICIAL_CN_REDIRECT_URI,
+      usePkce: mode === "code"
+    });
+    sendJSON(res, {
+      ok: true,
+      url: info.url,
+      state: info.state,
+      mode: info.mode,
+      serverKey,
+      serverLabel: SERVERS[serverKey].label,
+      // 提示用户接下来该做什么
+      hint: mode === "token"
+        ? "在浏览器打开上面的链接并登录授权，授权后浏览器地址栏会出现 #access_token=… 的地址，" +
+          "把它整段复制粘贴回工具即可。"
+        : "在浏览器打开上面的链接并登录授权，授权后浏览器地址栏会出现带 ?code=… 的地址，" +
+          "把它整段复制粘贴回工具即可。"
+    });
+  } catch (e) {
+    sendJSON(res, { ok: false, error: e.message }, 400);
+  }
+}
+
+/**
+ * POST /api/auth/manual
+ *   body: { serverKey, pasted }
+ *   pasted = 用户从浏览器地址栏复制回来的回调 URL 或 token 片段
+ */
+async function apiManualAuth(req, res, user) {
+  let body;
+  try { body = JSON.parse(await readBody(req)); }
+  catch (e) { return sendJSON(res, { ok: false, error: "请求体不是有效 JSON" }, 400); }
+
+  const serverKey = body.serverKey || "serenity";
+  if (!SERVERS[serverKey]) return sendJSON(res, { ok: false, error: "未知服务器" }, 400);
+  const pasted = String(body.pasted || "").trim();
+  if (!pasted) return sendJSON(res, { ok: false, error: "请粘贴授权后的回调地址" }, 400);
+
+  try {
+    const auth = authFor(user, serverKey);
+    const out = await auth.completeManual(pasted, serverKey);
+    persistAuth(user, auth);
+
+    // ★ 令牌拿到后立刻同步一次角色数据 —— 数据落到档案后长期保留，
+    //   与令牌是否过期无关。
+    let syncNote = null;
+    try {
+      const profiles = profilesFor(user);
+      const profile = await profiles.sync({
+        serverKey: out.rec.serverKey,
+        characterId: out.rec.characterId,
+        accessToken: out.rec.accessToken
+      });
+      syncNote = {
+        characterName: profile.characterName,
+        characterId: profile.characterId,
+        skillCount: Object.keys(profile.skills || {}).length
+      };
+    } catch (e) {
+      syncNote = { error: "令牌已取得，但同步角色数据失败：" + e.message };
+    }
+
+    sendJSON(res, {
+      ok: true,
+      characterId: out.rec.characterId,
+      characterName: out.rec.characterName,
+      serverKey: out.rec.serverKey,
+      expiresAt: out.rec.expiresAt,
+      hasRefresh: !!out.rec.refreshToken,
+      source: out.rec.source,
+      warning: out.warning,
+      sync: syncNote
+    });
+  } catch (e) {
+    sendJSON(res, { ok: false, error: e.message }, 400);
+  }
 }
 
 /** DELETE /api/profiles?key=... —— 删除档案 */
@@ -853,6 +956,10 @@ const server = http.createServer(async (req, res) => {
       return apiConfig(req, res, user);
     }
     if (url.startsWith("/api/sync") && req.method === "POST") return await apiSync(req, res, user, auth, profiles);
+    if (url.startsWith("/api/auth/manual")) {
+      if (req.method === "POST") return await apiManualAuth(req, res, user);
+      return apiManualAuthLink(req, res, user, q);
+    }
     if (url.startsWith("/api/profiles")) {
       if (req.method === "DELETE") return apiProfileDelete(req, res, url, q, profiles);
       return apiProfiles(req, res, profiles);

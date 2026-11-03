@@ -21,7 +21,6 @@ const { SERVERS } = require("./servers.js");
 const ROOT = path.join(__dirname, "..", "..");
 const PROFILE_DIR = path.join(ROOT, "用户数据");
 const PROFILE_FILE = path.join(PROFILE_DIR, "eve_char_profiles_v1.json");
-
 /** 角色档案结构
  * {
  *   id: "serenity:12345",
@@ -40,14 +39,23 @@ const PROFILE_FILE = path.join(PROFILE_DIR, "eve_char_profiles_v1.json");
  * }
  */
 class ProfileStore {
-  constructor() {
-    this.profiles = this._load();
+  /**
+   * @param {object} opts
+   *   opts.file      指定档案文件路径（多用户隔离时传各自目录下的路径）
+   *   opts.persist   自定义持久化出口 fn(profiles) —— 传了就用它，不再写文件
+   *   opts.profiles  直接给定初始档案（优先于读文件）
+   */
+  constructor(opts) {
+    opts = opts || {};
+    this.file = opts.file || PROFILE_FILE;
+    this.persist = typeof opts.persist === "function" ? opts.persist : null;
+    this.profiles = opts.profiles || this._load();
   }
 
   _load() {
     try {
-      if (!fs.existsSync(PROFILE_FILE)) return {};
-      const raw = JSON.parse(fs.readFileSync(PROFILE_FILE, "utf8"));
+      if (!fs.existsSync(this.file)) return {};
+      const raw = JSON.parse(fs.readFileSync(this.file, "utf8"));
       return raw && typeof raw === "object" ? raw : {};
     } catch (e) {
       return {};
@@ -55,9 +63,15 @@ class ProfileStore {
   }
 
   _save() {
+    // 自定义持久化出口（多用户隔离：写到该用户自己的目录）
+    if (this.persist) {
+      try { this.persist(this.profiles); } catch (e) { }
+      return;
+    }
     try {
-      if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR, { recursive: true });
-      fs.writeFileSync(PROFILE_FILE, JSON.stringify(this.profiles, null, 2), "utf8");
+      const dir = path.dirname(this.file);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.file, JSON.stringify(this.profiles, null, 2), "utf8");
     } catch (e) { /* 持久化失败不影响本次会话 */ }
   }
 
@@ -77,10 +91,13 @@ class ProfileStore {
       out.push({
         key,
         id: p.characterId,
+        characterId: p.characterId,
         serverKey: p.serverKey,
         serverLabel: SERVERS[p.serverKey] ? SERVERS[p.serverKey].label : p.serverKey,
         // 前台显示中文名
         characterName: p.characterName || ("角色 " + p.characterId),
+        // ★ 一并带上技能快照 —— 前端需在令牌过期后仍能用它算参数
+        skills: p.skills || {},
         skillCount: Object.keys(p.skills || {}).length,
         totalSP: p.totalSP || 0,
         syncedAt: p.syncedAt || null,

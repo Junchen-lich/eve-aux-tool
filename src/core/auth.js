@@ -97,7 +97,12 @@ function deriveKey(secret) {
  * 网易官方公共 ESI 应用的 Client ID 与回调地址
  * ------------------------------------------------------------------ */
 const OFFICIAL_CN_CLIENT_ID = "bc90aa496a404724a93f41b4f4e97761";
-const OFFICIAL_CN_REDIRECT_URI = "https://esi.evepc.163.com/ui/oauth2-redirect.html";
+const OFFICIAL_CN_REDIRECT_URI = "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html";
+
+/** 判断是否为网易官方公共 Client ID */
+function isOfficialClientId(clientId) {
+  return String(clientId || "").trim().toLowerCase() === OFFICIAL_CN_CLIENT_ID;
+}
 
 /**
  * 把上游返回的英文错误翻译成可操作的中文提示。
@@ -346,6 +351,209 @@ class AuthManager {
   /* ---------------- 步骤 2：处理回调 ---------------- */
 
   /**
+   * 手动授权通道：生成一个**授权链接**交给用户，
+   * 用户在浏览器完成登录授权后，把回调 URL（或 token 片段）粘回来。
+   *
+   * ★ 为什么需要这条通道：
+   *   网易官方公共 Client ID（bc90aa49…）在后台只登记了
+   *   https://ali-esi.evepc.163.com/ui/oauth2-redirect.html 一个回调地址，
+   *   本地工具无法用它做「自动跳回本地」的标准流程。
+   *   但用户可以在浏览器里用该链接完成授权，
+   *   再把浏览器地址栏里的回调 URL 粘回工具，由工具拿 code 换令牌。
+   *   —— 与 raoganzi.com 等第三方站点采用的做法一致。
+   *
+   * @param {string} serverKey 服务器
+   * @param {string[]} scopes 申请的 scope
+   * @param {object} opts { clientId, redirectUri, usePkce }
+   * @returns {{ url, state, mode }}
+   *   mode = "code"   → 回调 URL 里带 ?code=...&state=...
+   *   mode = "token"  → 回调 URL 片段里带 #access_token=...（隐式流程）
+   */
+  buildManualAuthorize(serverKey, scopes, opts) {
+    opts = opts || {};
+    const cfg = SERVERS[serverKey];
+    if (!cfg) throw new Error("未知服务器：" + serverKey);
+
+    const clientId = (opts.clientId || this.clientId || "").trim();
+    if (!clientId) throw new Error("未配置 Client ID");
+    const redirectUri = opts.redirectUri || OFFICIAL_CN_REDIRECT_URI;
+
+    const max = cfg.maxScopes || 0;
+    if (max && scopes.length > max) {
+      throw new Error(
+        cfg.label + " 一次最多申请 " + max + " 项权限，当前请求了 " + scopes.length + " 项。");
+    }
+
+    const state = createState();
+    const params = {
+      response_type: opts.usePkce === false ? "token" : "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: scopes.join(" "),
+      state,
+      realm: "ESI",
+      device_id: "eve-aux-tool"
+    };
+
+    // PKCE：仅在授权码流程下需要
+    let verifier = null;
+    if (params.response_type === "code") {
+      const pkce = createPkce();
+      verifier = pkce.verifier;
+      params.code_challenge = pkce.challenge;
+      params.code_challenge_method = pkce.method;
+    }
+
+    this.pending.set(state, {
+      verifier,
+      serverKey,
+      createdAt: Date.now(),
+      clientId,
+      redirectUri,
+      manual: true
+    });
+
+    return {
+      url: cfg.ssoAuthorize + "?" + new URLSearchParams(params).toString(),
+      state,
+      mode: params.response_type === "code" ? "code" : "token",
+      serverKey
+    };
+  }
+
+  /**
+   * 手动通道：解析用户粘回来的内容并换取令牌。
+   *
+   * 支持三种粘贴内容：
+   *   1. 完整回调 URL，带 ?code=...&state=...  → 授权码流程
+   *   2. 完整回调 URL，带 #access_token=...    → 隐式流程
+   *   3. 裸的 token 片段（#access_token=... 或裸 token 串）
+   *
+   * @param {string} pasted 用户粘贴的内容
+   * @param {string} serverKey 服务器（隐式流程无 state 时用于归属）
+   * @returns {{ rec, warning }}
+   */
+  async completeManual(pasted, serverKey) {
+    const text = String(pasted || "").trim();
+    if (!text) throw new Error("请粘贴授权后的回调地址或 token");
+
+    // 0) 用户可能直接粘了上游返回的 JSON 错误对象
+    if (text.startsWith("{")) {
+      try {
+        const j = JSON.parse(text);
+        if (j.error) {
+          throw new Error("授权失败：" + (j.error_description || j.error));
+        }
+      } catch (e) {
+        if (e instanceof Error && /授权失败/.test(e.message)) throw e;
+        // 不是 JSON 错误对象，按普通文本继续处理
+      }
+    }
+
+    // 1) 从任意文本里抠出查询串/片段
+    let q = "";
+    const hashIdx = text.indexOf("#");
+    if (hashIdx >= 0) {
+      q = text.slice(hashIdx + 1);
+    } else {
+      const qIdx = text.indexOf("?");
+      if (qIdx >= 0) q = text.slice(qIdx + 1);
+    }
+
+    const params = {};
+    if (q) {
+      for (const seg of q.split("&")) {
+        const i = seg.indexOf("=");
+        if (i <= 0) continue;
+        try {
+          params[decodeURIComponent(seg.slice(0, i))] =
+            decodeURIComponent(seg.slice(i + 1).replace(/\+/g, " "));
+        } catch (e) { /* 忽略无法解码的字段 */ }
+      }
+    }
+
+    // 上游直接返回的 JSON 错误
+    if (params.error) {
+      throw new Error("授权失败：" + (params.error_description || params.error));
+    }
+
+    // 2) 隐式流程：直接拿到 access_token
+    if (params.access_token) {
+      const key = serverKey || "serenity";
+      const rec = this._store({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token || null,
+        expires_in: params.expires_in || 1200,
+        token_type: params.token_type || "Bearer"
+      }, key);
+      rec.source = "manual-implicit";
+      this._save();
+      return {
+        rec,
+        warning: "已用隐式流程取得令牌。★ 网易官方公共 Client ID 不签发 refresh_token，" +
+          "令牌约 20 分钟后过期；**已拉取的角色数据会保留在本地**，只是无法自动续期，" +
+          "届时重新授权一次即可。"
+      };
+    }
+
+    // 3) 授权码流程：拿 code 换令牌
+    if (!params.code) {
+      throw new Error(
+        "粘贴的内容里没找到 code 或 access_token。\n" +
+        "请确认复制的是登录后浏览器地址栏的**完整地址**。");
+    }
+
+    const state = params.state;
+    const pending = state ? this.pending.get(state) : null;
+    const targetKey = (pending && pending.serverKey) || serverKey || "serenity";
+    if (state && pending) this.pending.delete(state);
+
+    const clientId = (pending && pending.clientId) || this.clientId;
+    const redirectUri = (pending && pending.redirectUri) || OFFICIAL_CN_REDIRECT_URI;
+    const verifier = pending && pending.verifier;
+
+    const cfg = SERVERS[targetKey];
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: params.code,
+      client_id: clientId,
+      redirect_uri: redirectUri
+    });
+    if (verifier) body.set("code_verifier", verifier);
+    if (this.clientSecret) body.set("client_secret", this.clientSecret);
+    for (const [k, v] of Object.entries(cfg.ssoExtraParams || {})) {
+      if (!body.has(k)) body.set(k, v);
+    }
+
+    const res = await fetch(cfg.ssoToken, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "EVE-AuxTool/0.1"
+      },
+      body: body.toString()
+    });
+    const text2 = await res.text();
+    if (!res.ok) {
+      let msg = text2;
+      try { msg = JSON.parse(text2).error_description || JSON.parse(text2).error || text2; } catch (e) { }
+      throw new Error("令牌交换失败 HTTP " + res.status + "：" +
+        explainAuthError(msg, { redirectUri, usingOfficialClientId: isOfficialClientId(clientId) }));
+    }
+    const data = JSON.parse(text2);
+    const rec = this._store(data, targetKey);
+    rec.source = "manual-code";
+    this._save();
+    return {
+      rec,
+      warning: data.refresh_token
+        ? null
+        : "已取得令牌。★ 网易官方公共 Client ID 不签发 refresh_token，" +
+          "令牌约 20 分钟后过期；**已拉取的角色数据会保留在本地**，只是无法自动续期。"
+    };
+  }
+
+  /**
    * 用授权码换取令牌
    * @param {string} code  授权码
    * @param {string} state 状态（用于匹配 pending）
@@ -509,6 +717,9 @@ module.exports = {
   encryptJson,
   decryptJson,
   deriveKey,
+  isOfficialClientId,
+  OFFICIAL_CN_CLIENT_ID,
+  OFFICIAL_CN_REDIRECT_URI,
   TOKEN_FILE,
   TOKEN_DIR
 };

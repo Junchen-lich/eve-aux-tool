@@ -37,7 +37,8 @@
     pendingBp: null,     // 当前核算的蓝图
     marketCache: {},      // 行情缓存
     cfg: null,            // /api/config 返回（各服状态与回调地址）
-    credentials: {}       // 各服已保存的 Client ID / Secret / 回调地址
+    credentials: {},      // 各服已保存的 Client ID / Secret / 回调地址
+    page: "char"          // 当前页面（switchPage 会更新）
   };
 
   /* ================================================================ *
@@ -232,7 +233,14 @@
         "并代入税率、制造时间、槽位、提炼产出等全部核算公式 —— 无需手填任何技能数值。" +
         "<br>点击下方按钮选择服务器并授权。仅申请「读取角色技能」权限，不会访问你的资产与钱包。"
       }));
-      var btns = el("div", { class: "row wrap", style: "margin-top:16px" });
+
+      /* ---- 方式一：标准授权（自注册应用）---- */
+      body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:20px 0 8px", text: "方式一 · 标准授权（推荐，需自注册应用）" }));
+      body.appendChild(el("div", { class: "tip", html:
+        "在「设置」页填好该服的 Client ID 与回调地址后，点下方按钮走标准授权码流程，" +
+        "授权完成后自动跳回本工具并同步技能。"
+      }));
+      var btns = el("div", { class: "row wrap", style: "margin-top:12px" });
       S.servers.forEach(function (sv) {
         btns.appendChild(el("button", {
           class: "btn pri",
@@ -241,6 +249,35 @@
         }));
       });
       body.appendChild(btns);
+
+      /* ---- 方式二：手动授权（网易官方公共 Client ID）---- */
+      body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:26px 0 8px", text: "方式二 · 手动授权（无需注册应用）" }));
+      body.appendChild(el("div", { class: "tip", html:
+        "不想注册应用？用网易<b>官方公共 Client ID</b> 也能授权 —— " +
+        "点「生成授权链接」，在浏览器里登录并同意后，把地址栏的整段地址粘回来即可。" +
+        "<br>⚠ 此方式拿不到 refresh_token，令牌约 20 分钟过期；" +
+        "<b>但已拉取的角色数据会长期保留在本地</b>，过期后技能参数依然可用，只需重新授权即可再次同步。"
+      }));
+      body.appendChild(el("div", { class: "row wrap", style: "margin-top:12px" }, [
+        el("button", {
+          class: "btn", text: "生成授权链接…",
+          onclick: function () {
+            try {
+              openManualPanel("serenity");
+              // 兜底：面板若未渲染出来，直接提示
+              setTimeout(function () {
+                if (!$("#charBody .card select")) {
+                  console.error("手动授权面板未渲染");
+                }
+              }, 100);
+            } catch (e) {
+              console.error("打开手动授权面板失败：", e);
+              status("charBody", '<div class="tip">打开手动授权面板失败：' +
+                escapeHtml(e && e.message ? e.message : String(e)) + "</div>", "err");
+            }
+          }
+        })
+      ]));
       return;
     }
 
@@ -264,6 +301,16 @@
       onclick: function () { S.char = null; S.skills = {}; S.skillOverride = {}; updateChip(); renderChar(); }
     }));
     body.appendChild(hd);
+
+    /* 数据来源提示：令牌过期不影响已落盘的数据 */
+    if (S.char.fromArchive) {
+      body.appendChild(el("div", { class: "tip", style: "margin-bottom:14px", html:
+        "<b>当前显示的是本地保存的数据</b>（上次同步于 " +
+        (S.char.syncedAt ? new Date(S.char.syncedAt).toLocaleString("zh-CN") : "未知时间") + "）。" +
+        "技能等数据已落盘，<b>不随令牌过期而失效</b>；" +
+        "点「重新同步」可在重新授权后拉取最新数据。"
+      }));
+    }
 
     /* 技能参数面板 */
     body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin-bottom:10px", text: "技能参数（直接影响下方核算结果）" }));
@@ -328,6 +375,32 @@
     location.href = "/sso/start?server=" + encodeURIComponent(serverKey) + "&scope=" + encodeURIComponent(scope);
   }
 
+  /**
+   * 从已保存的档案恢复角色状态。
+   *
+   * ★ 关键：角色数据（技能等）在授权成功时就落盘了，
+   *   与令牌是否过期无关 —— 令牌过期后数据依然可用，
+   *   只是不能自动续期、不能拉取新数据。
+   */
+  function restoreFromProfile(p) {
+    if (!p) return false;
+    var cid = p.characterId || p.id;
+    if (!cid) return false;
+    S.char = {
+      id: cid,
+      name: p.characterName,
+      serverKey: p.serverKey,
+      skills: p.skills || {},
+      // 标记数据来自本地档案（令牌可能已过期）
+      fromArchive: true,
+      syncedAt: p.syncedAt || null
+    };
+    S.skills = p.skills || {};
+    S.skillOverride = {};
+    updateChip();
+    return true;
+  }
+
   function syncChar(serverKey, characterId) {
     status("charBody", '<span class="spin"></span> 正在同步角色数据…', "busy");
     api("/api/sync", { method: "POST", body: { serverKey: serverKey, characterId: characterId } })
@@ -336,7 +409,9 @@
           id: characterId,
           name: j.characterName,
           serverKey: serverKey,
-          skills: j.skills || {}
+          skills: j.skills || {},
+          fromArchive: false,
+          syncedAt: Date.now()
         };
         S.skills = j.skills || {};
         S.skillOverride = {};
@@ -346,12 +421,154 @@
         toast("角色数据已同步", "ok");
       })
       .catch(function (e) {
-        status("charBody", "同步失败：" + e.message, "err");
+        // ★ 同步失败（多半是令牌过期）→ 回退到本地档案数据，不让用户看到空页面
+        var fallback = (S.profiles || []).filter(function (p) {
+          return p.serverKey === serverKey && (p.characterId || p.id) === characterId;
+        })[0];
+        if (fallback && restoreFromProfile(fallback)) {
+          renderChar();
+          renderSell();
+          status("charBody",
+            '<div class="tip">同步失败：' + escapeHtml(e.message) +
+            '<br><b>已切换到本地保存的数据</b>（技能等已落盘，不受令牌过期影响）。' +
+            '重新授权后可再次同步。</div>', "err");
+        } else {
+          status("charBody", "同步失败：" + escapeHtml(e.message), "err");
+        }
       });
   }
 
-  function updateChip() {
-    var chip = $("#charChip");
+  /** 转义 HTML 特殊字符（把服务端返回的错误信息插入 innerHTML 前必须用） */
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /**
+   * 手动授权面板。
+   *
+   * 流程（对标 raoganzi.com）：
+   *   1. 生成授权链接 → 2. 浏览器打开并登录授权 → 3. 把地址栏整段地址粘回来
+   * 工具拿到 code 后自行换取令牌并立即同步角色数据。
+   */
+  function openManualPanel(serverKey) {
+    var body = $("#charBody");
+    var scope = "esi-skills.read_skills.v1";
+
+    var panel = el("div", { class: "card", style: "margin-top:16px" });
+    var bd = el("div", { class: "card-bd" });
+
+    bd.appendChild(el("div", { style: "font-weight:500;margin-bottom:10px", text: "手动授权（网易官方公共 Client ID）" }));
+
+    // 服务器选择
+    var srvRow = el("div", { style: "margin-bottom:12px" });
+    srvRow.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "服务器" }));
+    var srvSel = el("select", { style: "width:100%" });
+    S.servers.forEach(function (sv) {
+      srvSel.appendChild(el("option", { value: sv.key, text: sv.label, selected: sv.key === serverKey ? "selected" : null }));
+    });
+    srvRow.appendChild(srvSel);
+    bd.appendChild(srvRow);
+
+    // 流程说明
+    var steps = el("div", { class: "tip", style: "margin-bottom:12px", html:
+      "<b>步骤 1</b>　点下方「生成授权链接」<br>" +
+      "<b>步骤 2</b>　在浏览器打开链接，登录并同意授权<br>" +
+      "<b>步骤 3</b>　授权后浏览器地址栏会出现带 <code>?code=…</code> 的地址，" +
+      "整段复制，粘贴到下面的输入框，点「完成授权」"
+    });
+    bd.appendChild(steps);
+
+    // 授权链接区
+    var linkWrap = el("div", { style: "margin-bottom:12px" });
+    var linkInput = el("input", { type: "text", readonly: "readonly", placeholder: "点下方按钮生成…", style: "width:100%" });
+    linkWrap.appendChild(linkInput);
+    var genBtn = el("button", { class: "btn sm", text: "生成授权链接", style: "margin-top:8px" });
+    var openBtn = el("button", { class: "btn sm pri", text: "在浏览器打开", style: "margin-top:8px;margin-left:8px" });
+    var genRow = el("div", { style: "margin-top:8px" }, [genBtn, openBtn]);
+    linkWrap.appendChild(genRow);
+    bd.appendChild(linkWrap);
+
+    // 粘贴区
+    bd.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "步骤 3：把浏览器地址栏的整段地址粘贴到这里" }));
+    var pasteArea = el("textarea", { rows: "3", placeholder: "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…", style: "width:100%" });
+    bd.appendChild(pasteArea);
+
+    var msg = el("div", { style: "margin-top:10px;font-size:13px" });
+    bd.appendChild(msg);
+
+    var finishBtn = el("button", { class: "btn pri", text: "完成授权", style: "margin-top:10px" });
+    bd.appendChild(finishBtn);
+
+    var currentUrl = "";
+
+    genBtn.addEventListener("click", function () {
+      genBtn.disabled = true;
+      msg.textContent = "正在生成…";
+      msg.className = "";
+      api("/api/auth/manual?server=" + encodeURIComponent(srvSel.value) +
+          "&scope=" + encodeURIComponent(scope) + "&mode=code")
+        .then(function (j) {
+          genBtn.disabled = false;
+          currentUrl = j.url;
+          linkInput.value = j.url;
+          msg.textContent = "已生成，复制或直接点「在浏览器打开」。";
+          msg.className = "";
+        })
+        .catch(function (e) {
+          genBtn.disabled = false;
+          msg.textContent = "生成失败：" + e.message;
+          msg.className = "err";
+        });
+    });
+
+    openBtn.addEventListener("click", function () {
+      if (!currentUrl) { msg.textContent = "请先生成授权链接"; msg.className = "err"; return; }
+      window.open(currentUrl, "_blank");
+    });
+
+    finishBtn.addEventListener("click", function () {
+      var pasted = pasteArea.value.trim();
+      if (!pasted) { msg.textContent = "请先粘贴回调地址"; msg.className = "err"; return; }
+      finishBtn.disabled = true;
+      msg.textContent = "正在换取令牌并同步角色数据…";
+      msg.className = "";
+      api("/api/auth/manual", {
+        method: "POST",
+        body: { serverKey: srvSel.value, pasted: pasted }
+      })
+        .then(function (j) {
+          finishBtn.disabled = false;
+          var lines = [];
+          lines.push("✓ 授权成功：" + (j.characterName || ("角色 " + j.characterId)));
+          if (j.sync && j.sync.error) lines.push("⚠ " + j.sync.error);
+          else if (j.sync) lines.push("✓ 已同步 " + j.sync.skillCount + " 项技能到本地档案");
+          if (j.warning) lines.push(j.warning);
+          msg.innerHTML = "<div class='tip'>" + escapeHtml(lines.join("\n")).replace(/\n/g, "<br>") + "</div>";
+          // 重新拉档案并刷新界面
+          api("/api/profiles").then(function (r) {
+            S.profiles = (r && r.profiles) || [];
+            if (S.profiles.length) {
+              restoreFromProfile(S.profiles[0]);
+              renderChar();
+              renderSell();
+            }
+          });
+        })
+        .catch(function (e) {
+          finishBtn.disabled = false;
+          msg.textContent = "失败：" + e.message;
+          msg.className = "err";
+        });
+    });
+
+    panel.appendChild(bd);
+    body.appendChild(panel);
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function updateChip() {    var chip = $("#charChip");
     if (S.char) {
       chip.className = "chip";
       $("#charChipTxt").textContent = S.char.name || ("角色 " + S.char.id);
@@ -1411,7 +1628,8 @@
     });
 
     // 服务器切换
-    loadConfig().then(function (cfg) {
+    // ★ 暴露为 cfgReady，供下面的档案加载链复用（保证只调一次）
+    var cfgReady = loadConfig().then(function (cfg) {
       var sel = $("#serverSel");
       sel.innerHTML = "";
       S.servers.forEach(function (sv) {
@@ -1445,17 +1663,20 @@
     });
 
     // 加载角色档案
-    api("/api/profiles").then(function (j) {
-      if (j.profiles && j.profiles.length) {
-        var p = j.profiles[0];
-        S.char = { id: p.id, name: p.characterName, serverKey: p.serverKey, skills: p.skills || {} };
-        S.skills = p.skills || {};
-        updateChip();
-        renderChar();
-        renderSell();
-      } else {
-        renderChar();
+    // ★ 依赖 loadConfig 先完成：S.servers 由它填充，否则 renderChar 时
+    //   服务器列表还是空的，授权按钮不会渲染出来。
+    //   复用同一个 promise（不另起一次），避免两条链并发时
+    //   后到的 renderChar() 把刚打开的手动授权面板清空。
+    cfgReady.then(function () {
+      return api("/api/profiles");
+    }).then(function (j) {
+      S.profiles = (j && j.profiles) || [];
+      if (S.profiles.length) {
+        // ★ 用本地档案恢复角色 —— 令牌过期后数据依然可用
+        restoreFromProfile(S.profiles[0]);
       }
+      renderChar();
+      renderSell();
     }).catch(function () {
       renderChar();
     });

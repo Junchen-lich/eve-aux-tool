@@ -51,7 +51,7 @@ const SERVERS = {
     //   保留 POST 作为兜底（服务端表单转发），但默认走 GET 直跳。
     ssoAuthorizeMethod: "GET",
     // 国服额外必填参数（realm / device_id 任意值即可）
-    ssoExtraParams: { realm: "esi", device_id: "eve-aux-tool" },
+    ssoExtraParams: { realm: "ESI", device_id: "eve-aux-tool" },
     // 国服 scope 一次最多 4 项
     maxScopes: 4,
     c3qBase: "https://cn.c3q.cc:20080/eve/market/api/",
@@ -68,15 +68,16 @@ const SERVERS = {
     // 网易官方 ESI（晨曦与曙光同集群同域名）
     esiBase: "https://ali-esi.evepc.163.com/latest",
     datasource: null,
-    ssoAuthorize: "https://login.evepc.163.com/v2/oauth/authorize/",
-    ssoToken: "https://login.evepc.163.com/v2/oauth/token/",
-    // ★ 实测（2026-11-03，浏览器实地验证）：国服 authorize 用 GET 跳转**完全可行**，
-    //   会正常重定向到网易账号登录页。此前用 curl 探测得出「只支持 POST」是误判 ——
-    //   原因是 curl 请求缺少 client_id/scope/realm 等参数，被服务端拒绝。
-    //   保留 POST 作为兜底（服务端表单转发），但默认走 GET 直跳。
+    // ★★ 曙光服有**独立的登录集群** login-infinity.evepc.163.com（实测 2026-11-03）。
+    //   晨曦用 login.evepc.163.com，曙光用 login-infinity.evepc.163.com ——
+    //   两者是两个不同的账号体系，授权链接互不通用。
+    //   （依据：raoganzi.com 生成的曙光授权链接指向 login-infinity，
+    //     晨曦授权链接指向 login；本工具实测两域名均存活且 authorize 返回 302 跳登录页）
+    ssoAuthorize: "https://login-infinity.evepc.163.com/v2/oauth/authorize/",
+    ssoToken: "https://login-infinity.evepc.163.com/v2/oauth/token/",
     ssoAuthorizeMethod: "GET",
     // 国服额外必填参数（realm / device_id 任意值即可）
-    ssoExtraParams: { realm: "esi", device_id: "eve-aux-tool" },
+    ssoExtraParams: { realm: "ESI", device_id: "eve-aux-tool" },
     // 国服 scope 一次最多 4 项
     maxScopes: 4,
     c3qBase: "https://cn.c3q.cc:20080/eve/market-sg/api/",
