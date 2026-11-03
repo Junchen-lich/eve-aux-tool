@@ -4,6 +4,16 @@ Documentation=file:///opt/eve-aux-tool/README.md
 After=network-online.target
 Wants=network-online.target
 
+# 重启频率限制：60 秒内最多启动 5 次，超过则放弃（避免疯狂重启打满日志）
+# ★ 这两项必须放在 [Unit] 段，写在 [Service] 段会被 systemd 忽略
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# ★ 前置条件：.env 必须存在。
+#   否则 systemd 会以 "result 'resources'" 失败，且错误信息完全不提文件缺失，
+#   极易误判为沙箱指令不兼容（实测排查过程见 docs/服务器部署指南.md 第 9.4 节）
+ConditionPathExists=/opt/eve-aux-tool/.env
+
 [Service]
 Type=simple
 User=eve
@@ -18,11 +28,9 @@ Environment=NODE_ENV=production
 # 启动命令
 ExecStart=/usr/bin/node server.js
 
-# 重启策略：异常退出后 5 秒重启，连续失败 5 次则放弃（避免疯狂重启打满日志）
+# 重启策略：异常退出后 5 秒重启
 Restart=on-failure
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
 
 # 优雅停机：给足时间让在途请求完成
 KillSignal=SIGTERM

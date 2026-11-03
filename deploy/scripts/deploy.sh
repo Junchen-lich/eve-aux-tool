@@ -73,6 +73,17 @@ fi
 chmod 600 "${ENV_FILE}"
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 
+# ★ 校验 .env 确实存在且可读
+#   否则 systemd 会以 "result 'resources'" 失败，且错误信息完全不提文件缺失，
+#   极易误判为沙箱指令不兼容（实测见 docs/服务器部署指南.md 第 9.4 节）
+if [ ! -r "${ENV_FILE}" ]; then
+  echo "      ✗ ${ENV_FILE} 不存在或不可读，systemd 将无法启动服务"
+  exit 1
+fi
+if ! grep -q "^EVE_MULTI_USER=1" "${ENV_FILE}" && grep -q "^HOST=0.0.0.0" "${ENV_FILE}"; then
+  echo "      ★ 警告：HOST=0.0.0.0 但 EVE_MULTI_USER 未设为 1 —— 任何人都可访问本服务"
+fi
+
 # ---------- 5. 目录权限 ----------
 echo "[5/7] 设置目录权限"
 mkdir -p "${APP_DIR}/用户数据"
@@ -115,6 +126,7 @@ echo "   1. 编辑 ${ENV_FILE}，填入 BASE_URL 与 EVE_CLIENT_ID（国服另�
 echo "   2. 配置 Nginx："
 echo "      cp ${APP_DIR}/deploy/nginx/${APP_NAME}.conf /etc/nginx/sites-available/"
 echo "      ln -s ../sites-available/${APP_NAME}.conf /etc/nginx/sites-enabled/"
+echo "      cp ${APP_DIR}/deploy/nginx/eve-log-format.conf /etc/nginx/conf.d/   ← 限流与日志格式，必须一起装"
 echo "      nginx -t && systemctl reload nginx"
 echo "   3. 申请证书：certbot --nginx -d 你的域名"
 echo "   4. 在 EVE 开发者后台把回调地址登记为 ${APP_DIR}/.env 中 BASE_URL + /sso/callback"
