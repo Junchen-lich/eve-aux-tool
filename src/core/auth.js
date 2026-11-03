@@ -214,12 +214,53 @@ class AuthManager {
     this.clientSecret = opts.clientSecret || "";
     this.redirectUri = opts.redirectUri || "http://localhost:8657/sso/callback";
     this.serverKey = opts.server || "serenity";
-    this.pending = new Map();   // state → { verifier, serverKey, createdAt }
     // 令牌落盘加密密钥（服务器部署时提供，磁盘上不存明文令牌）
     this.encryptionKey = opts.encryptionKey || null;
     // 绑定的用户存储（多用户隔离）
     this.store = opts.store || null;
     this.tokens = this.store ? this._restoreFrom(this.store) : this._load();
+
+    // ★ pending（state → PKCE 校验器等）必须**跨请求存活**。
+    //   authFor() 每次请求都会 new AuthManager()，实例内的 Map 活不过一次请求，
+    //   手动授权的「生成链接 → 粘贴回调」是两次独立请求，
+    //   若只存内存，第二步就找不到 code_verifier，
+    //   网易拿 code_challenge 无法校验 → 返回 HTTP 500。
+    //   → 有 store 时走 store 的持久化 pending（与标准授权流程一致）。
+    this.pending = new Map();   // 内存兜底（无 store 时用）
+    this.pendingStore = (this.store && typeof this.store.savePending === "function")
+      ? this.store : null;
+  }
+
+  /* ---------------- pending（跨请求） ---------------- */
+
+  /** 记录一次发起的授权 */
+  _savePending(state, info) {
+    if (!state) return;
+    if (this.pendingStore) {
+      try { this.pendingStore.savePending(state, info); return; } catch (e) { /* 落到内存 */ }
+    }
+    this.pending.set(state, Object.assign({ createdAt: Date.now() }, info));
+  }
+
+  /** 取一次待完成的授权记录 */
+  _getPending(state) {
+    if (!state) return null;
+    if (this.pendingStore) {
+      try {
+        const r = this.pendingStore.pending(state);
+        if (r) return r;
+      } catch (e) { /* 落到内存 */ }
+    }
+    return this.pending.get(state) || null;
+  }
+
+  /** 授权完成后清除记录 */
+  _clearPending(state) {
+    if (!state) return;
+    if (this.pendingStore) {
+      try { this.pendingStore.clearPending(state); } catch (e) { /* 忽略 */ }
+    }
+    this.pending.delete(state);
   }
 
   /* ---------------- 令牌持久化 ---------------- */
@@ -318,7 +359,7 @@ class AuthManager {
 
     const pkce = createPkce();
     const state = createState();
-    this.pending.set(state, {
+    this._savePending(state, {
       verifier: pkce.verifier,
       serverKey,
       createdAt: Date.now()
@@ -404,7 +445,10 @@ class AuthManager {
       params.code_challenge_method = pkce.method;
     }
 
-    this.pending.set(state, {
+    // ★ 必须落到**跨请求**的存储：手动通道的「生成链接」与「粘贴回调」
+    //   是两个独立 HTTP 请求，各自 new AuthManager()，
+    //   只存实例内存的话第二步就取不到 code_verifier → 网易返回 HTTP 500。
+    this._savePending(state, {
       verifier,
       serverKey,
       createdAt: Date.now(),
@@ -529,13 +573,31 @@ class AuthManager {
     }
 
     const state = params.state;
-    const pending = state ? this.pending.get(state) : null;
+    const pending = state ? this._getPending(state) : null;
     const targetKey = (pending && pending.serverKey) || serverKey || "serenity";
-    if (state && pending) this.pending.delete(state);
+    if (state && pending) this._clearPending(state);
 
     const clientId = (pending && pending.clientId) || this.clientId;
     const redirectUri = (pending && pending.redirectUri) || OFFICIAL_CN_REDIRECT_URI;
     const verifier = pending && pending.verifier;
+
+    // ★ 两种「没有 verifier」要分清：
+    //   a) 压根没有 pending 记录 → 说明这次粘贴的授权码不是本工具刚生成的，
+    //      多半是码已失效/已用过/与链接不配套 —— 让请求发出去，
+    //      由下面的 500 翻译给出完整指引（更有信息量）。
+    //   b) 有 pending 但缺 verifier → 说明 state→校验器的对应关系断了，
+    //      这种情况本地就该拦下，别发给网易换一个无信息的 500。
+    if (pending && !verifier) {
+      throw new Error(
+        "这次授权的 PKCE 校验器（code_verifier）丢失了，无法换取令牌。\n" +
+        "\n" +
+        "原因：生成授权链接与粘贴回调地址是两次独立请求，\n" +
+        "中间要保存 state → 校验器的对应关系；若这段关系断了，\n" +
+        "网易就无法校验 code_challenge。\n" +
+        "\n" +
+        "解决办法：重新点一次「生成授权链接」，用它生成的新链接去授权，\n" +
+        "授权完成后**立刻**把回调地址粘回来（别关服务、别等太久）。");
+    }
 
     const cfg = SERVERS[targetKey];
     const body = new URLSearchParams({
@@ -562,6 +624,40 @@ class AuthManager {
     if (!res.ok) {
       let msg = text2;
       try { msg = JSON.parse(text2).error_description || JSON.parse(text2).error || text2; } catch (e) { }
+      // ★ 网易对**任何无效授权码**都返回 HTTP 500 + {"Message":"An error has occurred."}
+      //   （实测：缺 client_id 才是 401 invalid_client；带上 client_id 后
+      //     无论 code 是否有效、redirect_uri 是否匹配，都是 500）
+      //   这句话对用户毫无意义 —— 必须翻译成可操作的原因。
+      if (res.status === 500 && /An error has occurred/i.test(text2)) {
+        throw new Error(
+          "网易拒绝了这次令牌交换（HTTP 500）。\n" +
+          "\n" +
+          "网易对无效授权码只会回一句「An error has occurred」，不说明原因。\n" +
+          "实测确认后，最可能是下面几种情况：\n" +
+          "\n" +
+          "1) **授权码已过期**（最常见）—— 授权码有效期只有几十秒。\n" +
+          "   粘贴前如果停顿过、或刷新过页面，码就废了。\n" +
+          "   → 重新点「生成授权链接」，授权完**立刻**粘贴回来。\n" +
+          "\n" +
+          "2) **授权码与生成它的链接不配套**\n" +
+          "   → 必须用刚生成的那条链接去授权，别用之前生成的旧链接。\n" +
+          "\n" +
+          "3) **授权码已被用过一次** —— 授权码只能用一次。\n" +
+          "   → 别重复粘贴同一个地址。\n" +
+          "\n" +
+          "4) **state 与生成链接时不匹配**\n" +
+          "   → 粘贴的地址要和「生成授权链接」那一次配套。\n" +
+          "\n" +
+          "5) **授权时的 redirect_uri 与换令牌时的不一致**\n" +
+          "   → 手动通道固定用 " + OFFICIAL_CN_REDIRECT_URI + "，\n" +
+          "     若你在网易后台登记的不是这个地址，换令牌必然失败。\n" +
+          "\n" +
+          "如果反复失败，最省事的办法是改用**隐式流程**：\n" +
+          "回到本工具的「角色」页 → 「生成授权链接…」→ 把「授权方式」\n" +
+          "从「授权码流程」改成「隐式流程」→ 重新生成链接并授权。\n" +
+          "浏览器地址栏会出现 #access_token=… 的地址，整段粘回来即可\n" +
+          "（隐式流程不需要 code_verifier，也没有几十秒的过期限制）。");
+      }
       throw new Error("令牌交换失败 HTTP " + res.status + "：" +
         explainAuthError(msg, { redirectUri, usingOfficialClientId: isOfficialClientId(clientId) }));
     }
@@ -585,9 +681,9 @@ class AuthManager {
    * @param {string} serverKey 服务器（可选，优先用 state 记录的）
    */
   async exchangeCode(code, state, serverKey) {
-    const pending = this.pending.get(state);
+    const pending = this._getPending(state);
     if (!pending) throw new Error("state 无效或已过期，请重新发起授权");
-    this.pending.delete(state);
+    this._clearPending(state);
 
     const cfg = SERVERS[pending.serverKey];
     const body = new URLSearchParams({

@@ -48,6 +48,10 @@
         </div>
         <div class="card-bd" id="charBody"></div>
       </div>
+      <!-- ★ 手动授权面板独立容器：
+           不放进 #charBody —— 那块区域会被 renderChar() 整体重绘，
+           面板会在配置/档案加载完成的那一刻被清空。 -->
+      <div id="manualAuthHost"></div>
     </section>
 
     <!-- ============ 市场 ============ -->

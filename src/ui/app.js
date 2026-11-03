@@ -263,13 +263,7 @@
           class: "btn", text: "生成授权链接…",
           onclick: function () {
             try {
-              openManualPanel("serenity");
-              // 兜底：面板若未渲染出来，直接提示
-              setTimeout(function () {
-                if (!$("#charBody .card select")) {
-                  console.error("手动授权面板未渲染");
-                }
-              }, 100);
+              openManualPanel(S.server);
             } catch (e) {
               console.error("打开手动授权面板失败：", e);
               status("charBody", '<div class="tip">打开手动授权面板失败：' +
@@ -295,6 +289,11 @@
     hd.appendChild(el("button", {
       class: "btn", text: "重新同步",
       onclick: function () { syncChar(S.char.serverKey, S.char.id); }
+    }));
+    hd.appendChild(el("button", {
+      class: "btn", text: "手动授权",
+      title: "用网易官方公共 Client ID 重新授权（令牌过期后可用）",
+      onclick: function () { openManualPanel(S.char.serverKey); }
     }));
     hd.appendChild(el("button", {
       class: "btn", text: "切换角色",
@@ -453,15 +452,40 @@
    * 工具拿到 code 后自行换取令牌并立即同步角色数据。
    */
   function openManualPanel(serverKey) {
-    var body = $("#charBody");
+    // ★ 面板挂在独立的 #manualAuthHost，不放进 #charBody ——
+    //   #charBody 会被 renderChar() 整体重绘（innerHTML=""），
+    //   放那里会在配置/档案加载完成的那一刻被清空。
+    var host = $("#manualAuthHost");
+    if (!host) {
+      // 兜底：浏览器可能缓存了旧版 index.html（没有这个容器）→ 动态补一个
+      console.warn("#manualAuthHost 不存在，动态创建");
+      var page = $("#page-char");
+      if (page) {
+        host = el("div", { id: "manualAuthHost" });
+        page.appendChild(host);
+      } else {
+        host = $("#charBody");
+      }
+    }
+    if (!host) return;
+    host.innerHTML = "";
+
     var scope = "esi-skills.read_skills.v1";
 
-    // ⚠ #charBody 本身就是 .card-bd，这里不能再套 .card > .card-bd
-    //   （嵌套 card-bd 会让内容渲染异常）—— 直接用一个普通容器。
-    var panel = el("div", { style: "margin-top:16px;padding-top:14px;border-top:1px solid var(--line)" });
-    var bd = el("div", {});
+    // 面板挂在 #manualAuthHost（页面级，不在 .card 内）→ 可以正常用 .card 包装
+    var panel = el("div", { class: "card", style: "margin-top:16px" });
+    var bd = el("div", { class: "card-bd" });
 
-    bd.appendChild(el("div", { style: "font-weight:500;margin-bottom:10px", text: "手动授权（网易官方公共 Client ID）" }));
+    // 标题行 + 关闭按钮（面板独立于 charBody，不会被自动清空，需要手动关）
+    var titleRow = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:10px" });
+    titleRow.appendChild(el("div", { style: "font-weight:500", text: "手动授权（网易官方公共 Client ID）" }));
+    titleRow.appendChild(el("span", { class: "spacer" }));
+    var closeBtn = el("button", { class: "btn sm", text: "收起" });
+    closeBtn.addEventListener("click", function () {
+      host.innerHTML = "";
+    });
+    titleRow.appendChild(closeBtn);
+    bd.appendChild(titleRow);
 
     // 服务器选择
     var srvRow = el("div", { style: "margin-bottom:12px" });
@@ -473,13 +497,27 @@
     srvRow.appendChild(srvSel);
     bd.appendChild(srvRow);
 
+    // 授权方式选择
+    var modeRow = el("div", { style: "margin-bottom:12px" });
+    modeRow.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "授权方式" }));
+    var modeSel = el("select", { style: "width:100%" });
+    modeSel.appendChild(el("option", { value: "code", text: "授权码流程（地址栏带 ?code=…）" }));
+    modeSel.appendChild(el("option", { value: "token", text: "隐式流程（地址栏带 #access_token=…）—— 更不易失败" }));
+    modeRow.appendChild(modeSel);
+    bd.appendChild(modeRow);
+
+    var modeNote = el("div", { class: "tip", style: "margin-bottom:14px", html:
+      "授权码流程用 PKCE 保护，安全性更高，但授权码只有几十秒有效期，粘慢了就会失效。" +
+      "隐式流程没有有效期问题，更适合手动粘贴，但令牌直接出现在地址栏里。"
+    });
+    bd.appendChild(modeNote);
+
     // 流程说明 —— 明确区分「授权链接」与「要粘贴的地址」
     var steps = el("div", { class: "tip", style: "margin-bottom:14px", html:
       "<b>步骤 1</b>　点下方「生成授权链接」，再点「在浏览器打开」<br>" +
       "<b>步骤 2</b>　在浏览器里登录网易账号并同意授权<br>" +
-      "<b>步骤 3</b>　授权后浏览器会跳到一个 <b>ali-esi.evepc.163.com</b> 开头的地址" +
-      "（形如 <code>…/oauth2-redirect.html?code=…&state=…</code>），" +
-      "复制<b>那一个</b>，粘贴到下方输入框，点「完成授权」<br>" +
+      "<b>步骤 3</b>　授权后浏览器会跳到一个 <b>ali-esi.evepc.163.com</b> 开头的地址，" +
+      "把它<b>整段复制</b>，粘贴到下方输入框，点「完成授权」<br>" +
       "<span style=\"color:var(--warn)\">⚠ 要粘贴的是<b>授权之后</b>的地址，" +
       "不是步骤 1 生成的那个授权链接 —— 两者长得很像但不是一回事。</span>"
     });
@@ -517,10 +555,11 @@
       style: "font-size:12px;color:var(--fg-2);margin-bottom:4px;font-weight:500",
       text: "② 授权完成后浏览器里的地址 —— 粘贴到这里"
     }));
-    bd.appendChild(el("div", {
+    var pasteHint = el("div", {
       style: "font-size:12px;color:var(--fg-3);margin-bottom:6px",
       text: "应该是 ali-esi.evepc.163.com 开头、带 ?code=… 的地址"
-    }));
+    });
+    bd.appendChild(pasteHint);
     var pasteArea = el("textarea", {
       rows: "3",
       placeholder: "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…",
@@ -541,12 +580,19 @@
       msg.textContent = "正在生成…";
       msg.className = "";
       api("/api/auth/manual?server=" + encodeURIComponent(srvSel.value) +
-          "&scope=" + encodeURIComponent(scope) + "&mode=code")
+          "&scope=" + encodeURIComponent(scope) + "&mode=" + encodeURIComponent(modeSel.value))
         .then(function (j) {
           genBtn.disabled = false;
           currentUrl = j.url;
           linkInput.value = j.url;
-          msg.textContent = "已生成，复制或直接点「在浏览器打开」。";
+          // 粘贴框的示例随模式变化，减少用户贴错
+          pasteArea.placeholder = (j.mode === "token")
+            ? "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html#access_token=…"
+            : "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…";
+          pasteHint.textContent = (j.mode === "token")
+            ? "应该是 ali-esi.evepc.163.com 开头、带 #access_token=… 的地址"
+            : "应该是 ali-esi.evepc.163.com 开头、带 ?code=… 的地址";
+          msg.innerHTML = "<div class='tip'>已生成，复制或直接点「在浏览器打开」。</div>";
           msg.className = "";
         })
         .catch(function (e) {
@@ -617,13 +663,17 @@
           if (j.warning) lines.push(j.warning);
           msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
             escapeHtml(lines.join("\n")) + "</div>";
-          // 重新拉档案并刷新界面
+          // 重新拉档案并刷新界面；成功后收起面板，让「角色」页显示新角色
           api("/api/profiles").then(function (r) {
             S.profiles = (r && r.profiles) || [];
             if (S.profiles.length) {
               restoreFromProfile(S.profiles[0]);
               renderChar();
               renderSell();
+              // 延迟收起，让成功提示先被看到
+              setTimeout(function () {
+                if (msg.textContent.indexOf("授权成功") >= 0) host.innerHTML = "";
+              }, 2500);
             }
           });
         })
@@ -639,8 +689,7 @@
     });
 
     panel.appendChild(bd);
-    body.appendChild(panel);
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    host.appendChild(panel);
   }
 
   function updateChip() {    var chip = $("#charChip");

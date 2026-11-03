@@ -299,7 +299,15 @@ function serveFile(res, file, contentType) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       return res.end("未找到");
     }
-    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache" });
+    // ★ 用 no-store 而非 no-cache：
+    //   no-cache 允许浏览器存副本，只要求「使用前重新验证」；
+    //   但本服务不提供 ETag / Last-Modified，浏览器拿不到可验证的信息，
+    //   实践中会直接用旧副本 —— 改前端后页面仍是旧版（本次踩过）。
+    //   本地开发工具宁可多一次请求，也不给用户看陈旧界面。
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store, must-revalidate"
+    });
     res.end(data);
   });
 }
@@ -393,10 +401,13 @@ ${warnings.map(w => "<pre style=\"white-space:pre-wrap;background:#fdf3f2;paddin
     }
 
     const au = auth.buildAuthorize(serverKey, scopes);
-    // ★ 授权状态按用户隔离：多用户同时授权时 state 不会互相覆盖
+    // ★ 授权状态由 AuthManager._savePending 落盘（按用户隔离，多用户同时授权
+    //   时 state 不会互相覆盖）。这里补齐该服凭据，供回调时还原。
     user.store.savePending && user.store.savePending(au.state, {
       verifier: au.form ? au.form.code_verifier : null,
-      serverKey
+      serverKey,
+      clientId: auth.clientId,
+      redirectUri: auth.redirectUri
     });
     if (au.method === "GET") {
       res.writeHead(302, { "Location": au.url });
@@ -966,7 +977,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 静态资源（公开：页面与数据表不含敏感信息）
-    if (url === "/" || url === "/index.html") {
+    // ★ 用 url 的路径部分判断（去掉查询串）——
+    //   否则 `/?openpanel=1` 这类带参数的首页链接会 404。
+    const pathOnly = url.split("?")[0];
+    if (pathOnly === "/" || pathOnly === "/index.html") {
       return serveFile(res, path.join(ROOT, "index.html"), "text/html; charset=utf-8");
     }
     if (url.startsWith("/data/")) {

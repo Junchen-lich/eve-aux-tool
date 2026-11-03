@@ -287,8 +287,85 @@ async function testManualChannel() {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { }
 }
 
-/* ---------------- 10. 令牌过期后数据保留 ---------------- */
-section("【令牌过期后数据保留】");
+/* ---------------- 11. pending 跨请求存活（PKCE verifier） ---------------- */
+section("【pending 跨请求存活】");
+
+/**
+ * 跨请求 pending 的验证必须放在 async 函数里 ——
+ * 顶层 await 在 CommonJS 里不合法，写在同步块里会**静默跳过**断言。
+ */
+async function testPendingAcrossRequests() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eve-pend-"));
+  const { UserSpace } = require("./user-store.js");
+  const us = new UserSpace({ salt: "pend", singleUser: true, baseDir: tmpDir });
+  const store = us.store("local");
+
+  // 请求 1：生成授权链接（实例 A）
+  const authA = new AuthManager({ clientId: OFFICIAL_CN_CLIENT_ID, store });
+  const au = authA.buildManualAuthorize("shuguang", ["esi-skills.read_skills.v1"], {
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    redirectUri: OFFICIAL_CN_REDIRECT_URI,
+    usePkce: true
+  });
+
+  // 请求 2：粘贴回调（实例 B —— 全新实例，模拟独立 HTTP 请求）
+  const authB = new AuthManager({ clientId: OFFICIAL_CN_CLIENT_ID, store });
+  const p = authB._getPending(au.state);
+
+  ok(!!p, "★ 跨请求能取到 pending 记录");
+  ok(p && !!p.verifier, "★ PKCE code_verifier 跨请求存活（长度 " +
+    (p && p.verifier ? p.verifier.length : 0) + "）");
+  ok(p && p.verifier && p.verifier.length >= 43, "verifier 长度合规");
+  ok(p && p.serverKey === "shuguang", "pending 记住了服务器");
+  ok(p && p.clientId === OFFICIAL_CN_CLIENT_ID, "pending 记住了 Client ID");
+  ok(p && p.redirectUri === OFFICIAL_CN_REDIRECT_URI, "pending 记住了回调地址");
+  ok(fs.existsSync(path.join(tmpDir, "local", "pending.json")), "pending 已落盘");
+
+  // 有 pending 但缺 verifier → 本地就该拦下，不发给网易换一个无信息的 500
+  const authC = new AuthManager({ clientId: OFFICIAL_CN_CLIENT_ID, store });
+  authC._savePending("STATE_NO_VERIFIER", { serverKey: "shuguang", clientId: OFFICIAL_CN_CLIENT_ID });
+  let errMsg = "";
+  try {
+    await (authC.completeManual(
+      "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=FAKE&state=STATE_NO_VERIFIER",
+      "shuguang"));
+  } catch (e) { errMsg = e.message; }
+  ok(errMsg.includes("code_verifier"), "★ pending 缺 verifier 时本地就报清楚（不发请求给网易）");
+  ok(errMsg.includes("立刻"), "给出了可操作指引（立刻粘贴）");
+
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { }
+}
+
+/* ---------------- 12. 网易 500 错误的翻译 ---------------- */
+section("【网易 500 错误的翻译】");
+
+/**
+ * 网易对**任何无效授权码**都返回 HTTP 500 + {"Message":"An error has occurred."}
+ * （实测：缺 client_id 才是 401 invalid_client；一旦带上 client_id，
+ *   无论 code 是否有效、redirect_uri 是否匹配，都是 500）
+ * → 这句话对用户毫无意义，必须翻译成可操作的原因。
+ */
+async function testNetEase500Translation() {
+  const { AuthManager: AM } = require("./auth.js");
+  const a = new AM({ clientId: OFFICIAL_CN_CLIENT_ID });
+  let msg = "";
+  try {
+    await (a.completeManual(
+      "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=INVALID&state=S",
+      "shuguang"));
+  } catch (e) { msg = e.message; }
+
+  ok(msg.includes("网易拒绝了这次令牌交换"), "★ 500 被翻译成人话", msg.split("\n")[0].slice(0, 30));
+  ok(msg.includes("授权码已过期"), "列出「授权码已过期」这个最常见原因");
+  ok(msg.includes("立刻"), "给出可操作指引（立刻粘贴）");
+  ok(msg.includes("隐式流程"), "★ 给出了更可靠的备选方案（隐式流程）");
+  // 原始英文只作为「网易原话」被引用说明，不应作为错误主体抛给用户
+  ok(msg.indexOf("An error has occurred") === -1
+    || msg.indexOf("网易拒绝了这次令牌交换") < msg.indexOf("An error has occurred"),
+    "★ 不把网易的原始英文当错误主体抛给用户");
+}
+
+/* ---------------- 13. 令牌过期后数据保留 ---------------- */section("【令牌过期后数据保留】");
 {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eve-expire-"));
   const { UserSpace } = require("./user-store.js");
@@ -334,9 +411,25 @@ section("【令牌过期后数据保留】");
 }
 
 /* ------------------------------------------------------------------ */
+// ★ 串行执行所有 async 测试段，再统计 ——
+//   顶层 await 在 CommonJS 里不合法，写在同步块中会静默跳过断言（假通过）。
 testManualChannel()
   .catch(function (e) {
     console.error("  FAIL 手动授权通道抛出异常 → " + (e && e.message ? e.message : e));
+    fail++;
+  })
+  .then(function () {
+    return testPendingAcrossRequests();
+  })
+  .catch(function (e) {
+    console.error("  FAIL pending 跨请求验证抛出异常 → " + (e && e.message ? e.message : e));
+    fail++;
+  })
+  .then(function () {
+    return testNetEase500Translation();
+  })
+  .catch(function (e) {
+    console.error("  FAIL 网易 500 翻译验证抛出异常 → " + (e && e.message ? e.message : e));
     fail++;
   })
   .then(function () {
