@@ -59,13 +59,57 @@ const APP_VERSION = (() => {
   } catch (e) { return "0.0.0"; }
 })();
 
-/** 回调地址：BASE_URL 优先，否则由监听地址推导 */
-function defaultRedirectUri() {
+/**
+ * 回调地址：BASE_URL 优先，否则由监听地址推导。
+ *
+ * ★ 必须跟随**实际监听端口**：端口被占用时 server.js 会自动 +1 顺延，
+ *   若这里在启动时按 PORT 固化，回调就会指向一个没人监听的端口，
+ *   网易在登录后校验时判定「redirect URL 不匹配」而授权失败。
+ *   因此这里用函数而非常量，在每次发起授权时按当前端口重新计算。
+ *
+ * ★ 主机名统一用 localhost（而非 127.0.0.1）：
+ *   网易把 redirect_uri 当**字符串**比对，localhost 与 127.0.0.1 是两个
+ *   不同值。后台登记的是哪个就得用哪个，否则同样报「不匹配」。
+ *   这里固定输出 localhost，因为它是开发者后台最常用的登记形式。
+ */
+function defaultRedirectUri(port) {
   if (BASE_URL) return BASE_URL + "/sso/callback";
-  const hostPart = (HOST === "0.0.0.0" || HOST === "::") ? "localhost" : HOST;
-  return "http://" + hostPart + ":" + PORT + "/sso/callback";
+  return "http://localhost:" + (port || PORT) + "/sso/callback";
 }
-const REDIRECT_URI = process.env.EVE_REDIRECT_URI || defaultRedirectUri();
+
+/**
+ * 取指定服务器的回调地址。优先级：
+ *   1. 用户在「设置」页按服填写的 redirectUriByServer[serverKey]
+ *   2. 环境变量 EVE_REDIRECT_URI（服务器部署场景统一入口）
+ *   3. 按实际监听端口推导（本地开发）
+ */
+function redirectUriFor(user, serverKey) {
+  // 1) 用户按服填写的回调地址（设置页「各服回调地址」）
+  try {
+    const meta = user && user.store ? user.store.meta() : null;
+    const perServer = meta && meta.servers && meta.servers[serverKey];
+    if (perServer && perServer.redirectUri) return perServer.redirectUri;
+  } catch (e) { /* 读不到配置则继续 */ }
+
+  // 2) 旧版全局配置（设置页早期版本 / 旧配置文件）
+  const legacy = (user && user.store && user.store.meta() && user.store.meta().redirectUri)
+    || cfg.redirectUri || "";
+  if (legacy) {
+    // ★ 端口与实际监听端口不一致时**不能盲信**：
+    //   陈旧的回调地址正是「redirect URL 不匹配」的常见成因之一。
+    const m = String(legacy).match(/^https?:\/\/[^:/]+:(\d+)/);
+    const port = m ? Number(m[1]) : null;
+    if (!port || port === currentPort) return legacy;
+    // 端口已变 → 按实际端口重建，保留原主机名与路径
+    return legacy.replace(/^https?:\/\/[^:/]+:\d+/, "http://localhost:" + currentPort);
+  }
+
+  // 3) 环境变量（服务器部署场景统一入口）
+  if (process.env.EVE_REDIRECT_URI) return process.env.EVE_REDIRECT_URI;
+
+  // 4) 按实际监听端口推导
+  return defaultRedirectUri(currentPort);
+}
 
 /* 应用配置存用户数据目录，便于用户改 */
 const CONFIG_FILE = path.join(ROOT, "用户数据", "eve_config_v1.json");
@@ -114,16 +158,89 @@ function currentUser(req) {
   return { userId: uid, store: userSpace.store(uid) };
 }
 
+/**
+ * 网易官方公共 ESI 应用的 Client ID。
+ *
+ * ★ 这个 ID 是网易自己注册给 esi.evepc.163.com 用的，
+ *   它在后台登记的回调地址固定为
+ *   https://esi.evepc.163.com/ui/oauth2-redirect.html
+ *   —— 用它做本地工具的授权时，登录后必然被判定
+ *   「The redirect URL does not match any of the configured values for this client」。
+ *   唯一可行的用法是把该地址填进工具的「设置」页，
+ *   授权后从浏览器地址栏取回 token（落地页会带上 #access_token=...）。
+ */
+const OFFICIAL_CN_CLIENT_ID = "bc90aa496a404724a93f41b4f4e97761";
+const OFFICIAL_CN_REDIRECT_URI = "https://esi.evepc.163.com/ui/oauth2-redirect.html";
+
+function isOfficialClientId(clientId) {
+  return String(clientId || "").trim().toLowerCase() === OFFICIAL_CN_CLIENT_ID;
+}
+
+/**
+ * 按服务器解析应用凭据。
+ *
+ * ★ 三套集群各自独立注册应用，Client ID 不能混用：
+ *   · 欧服（宁静）  → CCP 开发者后台 developers.eveonline.com 注册
+ *   · 国服（晨曦）  → 网易开发者后台注册
+ *   · 国服（曙光）  → 曙光是独立集群（独立账号与角色），通常需**单独注册**，
+ *                     其登记的回调地址与晨曦互不相通
+ *   用错 Client ID 会得到网易的
+ *   「The redirect URL does not match any of the configured values for this client」。
+ *
+ * 优先级：用户「设置」页按服配置 → 环境变量 → 全局兜底。
+ */
+function credentialsFor(user, serverKey) {
+  const meta = (user && user.store) ? user.store.meta() : {};
+  const isCN = serverKey === "serenity" || serverKey === "shuguang";
+
+  // 1) 用户按服配置（设置页填写）
+  const perServer = meta.servers && meta.servers[serverKey];
+  if (perServer && perServer.clientId) {
+    return {
+      clientId: perServer.clientId,
+      clientSecret: perServer.clientSecret || "",
+      redirectUri: perServer.redirectUri || redirectUriFor(user, serverKey)
+    };
+  }
+
+  // 2) 环境变量：国服可区分晨曦/曙光，欧服用通用
+  const envClientId = isCN
+    ? (serverKey === "shuguang"
+      ? (process.env.EVE_CLIENT_ID_SG || process.env.EVE_CLIENT_ID_CN)
+      : (process.env.EVE_CLIENT_ID_CN || process.env.EVE_CLIENT_ID))
+    : (process.env.EVE_CLIENT_ID || process.env.EVE_CLIENT_ID_CN);
+  if (envClientId) {
+    return {
+      clientId: envClientId,
+      clientSecret: isCN
+        ? (process.env.EVE_CLIENT_SECRET_CN || "")
+        : (process.env.EVE_CLIENT_SECRET || ""),
+      redirectUri: redirectUriFor(user, serverKey)
+    };
+  }
+
+  // 3) 全局兜底（设置页旧格式）
+  const globalId = meta.clientId || cfg.clientId || CLIENT_ID;
+  return {
+    clientId: globalId,
+    clientSecret: meta.clientSecret || cfg.clientSecret || "",
+    redirectUri: redirectUriFor(user, serverKey)
+  };
+}
+
 /* 按用户隔离的鉴权与档案存取 */
-function authFor(user) {
+function authFor(user, serverKey) {
+  const cred = credentialsFor(user, serverKey);
   const auth = new AuthManager({
-    clientId: user.store.meta().clientId || cfg.clientId || CLIENT_ID,
-    clientSecret: user.store.meta().clientSecret || cfg.clientSecret || "",
-    redirectUri: REDIRECT_URI,
+    clientId: cred.clientId,
+    clientSecret: cred.clientSecret,
+    redirectUri: cred.redirectUri,
     // 服务器部署时用盐派生密钥，令牌落盘加密
     encryptionKey: ENCRYPTION_KEY,
     store: user.store
   });
+  // 记录本次授权所用的服务器，便于刷新令牌时沿用同一套凭据
+  auth.serverKey = serverKey;
   return auth;
 }
 
@@ -202,11 +319,76 @@ function queryOf(url) {
  *   欧服：302 跳转到 login.eveonline.com
  *   国服：POST 转发到国服登录页（配置 ssoAuthorizeMethod 决定）
  */
+/**
+ * ★ 授权前预检：拦下必然失败的请求。
+ *
+ * 网易在**登录之后**才校验 redirect_uri，所以带着错误回调地址跳过去，
+ * 用户要完整登录一遍才看到一句「redirect URL does not match」——
+ * 体验极差。这里在跳转前就检查，能省掉一整轮登录。
+ *
+ * 检查项：
+ *   1) 用了网易官方公共 Client ID，但回调地址不是官方落地页 → 必然失败
+ *   2) 回调地址指向的端口与本服务实际监听端口不一致 → 必然失败
+ */
+function precheckAuth(user, serverKey, auth) {
+  const warnings = [];
+  const redirectUri = auth.redirectUri;
+
+  // 1) 官方公共 Client ID 的回调地址限定
+  if (isOfficialClientId(auth.clientId)
+      && String(redirectUri || "").trim() !== OFFICIAL_CN_REDIRECT_URI) {
+    warnings.push(
+      "你正在用网易官方公共 Client ID（" + OFFICIAL_CN_CLIENT_ID + "）授权「" +
+      SERVERS[serverKey].label + "」。\n" +
+      "该 ID 在网易后台只登记了回调地址 " + OFFICIAL_CN_REDIRECT_URI + "，\n" +
+      "而本工具本次上报的是 " + redirectUri + "。\n" +
+      "网易会在你登录之后才校验回调地址，届时会报：\n" +
+      "  The redirect URL does not match any of the configured values for this client.\n" +
+      "\n" +
+      "解决：在「设置」页为该服填入你自己在网易开发者后台注册的 Client ID，\n" +
+      "      并把回调地址登记为 " + redirectUri + "。\n" +
+      "      （曙光服是独立集群，需在网易后台单独注册，不能与晨曦共用。）");
+  }
+
+  // 2) 回调端口与实际监听端口是否一致
+  if (!process.env.EVE_REDIRECT_URI && !BASE_URL) {
+    const m = String(redirectUri || "").match(/^https?:\/\/[^:/]+:(\d+)/);
+    const port = m ? Number(m[1]) : null;
+    if (port && port !== currentPort) {
+      warnings.push(
+        "回调地址的端口（" + port + "）与本服务实际监听端口（" + currentPort + "）不一致，\n" +
+        "授权后回调将无人接收。请在「设置」页把回调地址改为 " +
+        defaultRedirectUri(currentPort) + "。");
+    }
+  }
+
+  return warnings;
+}
+
+/**
+ * GET /sso/start?server=serenity&scope=a,b
+ *   欧服：302 跳转到 login.eveonline.com
+ *   国服：POST 转发到国服登录页（配置 ssoAuthorizeMethod 决定）
+ */
 async function ssoStart(req, res, url, q, user) {
   const serverKey = q.server || "serenity";
   const scopes = (q.scope || "esi-skills.read_skills.v1").split(",").map(s => s.trim()).filter(Boolean);
   try {
-    const auth = authFor(user);
+    // ★ 传入 serverKey：按服解析 Client ID 与回调地址
+    const auth = authFor(user, serverKey);
+
+    // ★ 预检：拦下必然失败的授权，避免用户白登录一次
+    const warnings = precheckAuth(user, serverKey, auth);
+    if (warnings.length) {
+      return sendHTML(res, `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<title>授权前置检查未通过</title></head>
+<body style="font-family:system-ui,sans-serif;padding:40px;max-width:760px;margin:0 auto;line-height:1.7">
+<h2 style="color:#c0392b">授权前置检查未通过</h2>
+${warnings.map(w => "<pre style=\"white-space:pre-wrap;background:#fdf3f2;padding:16px;border-radius:8px;border-left:4px solid #c0392b\">" + escapeHtml(w) + "</pre>").join("\n")}
+<p><a href="/">返回工具</a>（到「设置」页调整后再试）</p>
+</body></html>`, 400);
+    }
+
     const au = auth.buildAuthorize(serverKey, scopes);
     // ★ 授权状态按用户隔离：多用户同时授权时 state 不会互相覆盖
     user.store.savePending && user.store.savePending(au.state, {
@@ -249,8 +431,12 @@ async function ssoCallback(req, res, url, q, user) {
 <h2>授权失败</h2><p>未收到授权码。</p><p><a href="/">返回工具</a></p></body></html>`, 400);
   }
   try {
-    const auth = authFor(user);
-    const rec = await auth.exchangeCode(code, state);
+    // 回调时按 state 记录的服务器取凭据（不能用查询参数，state 才可信）
+    const pending = user.store.pending ? user.store.pending(state) : null;
+    const serverKey = (pending && pending.serverKey) || q.server || "serenity";
+    const auth = authFor(user, serverKey);
+    const rec = await auth.exchangeCode(code, state, serverKey);
+    user.store.clearPending && user.store.clearPending(state);
     persistAuth(user, auth);
     // 通知前端（若页面开着）
     sendHTML(res, `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>授权成功</title></head>
@@ -278,20 +464,39 @@ fetch('/api/sync', {method:'POST',headers:{'Content-Type':'application/json'},
  * ------------------------------------------------------------------ */
 
 /** GET /api/config —— 前端初始化用 */
-function apiConfig(req, res) {
-  sendJSON(res, {
-    ok: true,
-    clientIdConfigured: !!(cfg.clientId || CLIENT_ID),
-    redirectUri: REDIRECT_URI,
-    baseUrl: BASE_URL || null,
-    multiUser: MULTI_USER,
-    servers: SERVER_ORDER.map(k => ({
+function apiConfig(req, res, user) {
+  // 分服凭据状态：前端「设置」页据此显示每个服是否已配置
+  const servers = SERVER_ORDER.map(k => {
+    const cred = credentialsFor(user, k);
+    const meta = (user && user.store) ? user.store.meta() : {};
+    const perServer = meta.servers && meta.servers[k];
+    return {
       key: k,
       label: SERVERS[k].label,
       short: SERVERS[k].short,
       esiBase: SERVERS[k].esiBase,
-      authorizeMethod: SERVERS[k].ssoAuthorizeMethod
-    }))
+      authorizeMethod: SERVERS[k].ssoAuthorizeMethod,
+      // 该服是否已配置可用 Client ID
+      clientIdConfigured: !!cred.clientId,
+      // 该服当前生效的回调地址
+      redirectUri: cred.redirectUri,
+      // 是否使用网易官方公共 Client ID（回调地址被限定，只能用官方落地页）
+      usingOfficialClientId: isOfficialClientId(cred.clientId),
+      // ★ 回显已保存的 Client ID（便于用户核对）；secret 只回传「是否已设置」
+      clientId: cred.clientId || "",
+      clientSecretSet: !!(perServer && perServer.clientSecret) || !!cred.clientSecret,
+      // 标记该服是否用了「按服独立配置」（而非全局兜底）
+      perServerConfigured: !!(perServer && perServer.clientId)
+    };
+  });
+
+  sendJSON(res, {
+    ok: true,
+    clientIdConfigured: servers.some(s => s.clientIdConfigured),
+    redirectUri: defaultRedirectUri(currentPort),
+    baseUrl: BASE_URL || null,
+    multiUser: MULTI_USER,
+    servers
   });
 }
 
@@ -356,6 +561,21 @@ async function apiConfigSave(req, res, user) {
     if (body.clientId !== undefined) meta.clientId = body.clientId;
     if (body.clientSecret !== undefined) meta.clientSecret = body.clientSecret;
     if (body.redirectUri) meta.redirectUri = body.redirectUri;
+
+    // ★ 分服凭据：三套集群的 Client ID 互不通用，各自独立保存
+    if (body.servers && typeof body.servers === "object") {
+      if (!meta.servers || typeof meta.servers !== "object") meta.servers = {};
+      for (const key of Object.keys(body.servers)) {
+        if (!SERVERS[key]) continue;              // 只接受已知服务器键
+        const incoming = body.servers[key] || {};
+        const cur = meta.servers[key] || {};
+        if (incoming.clientId !== undefined) cur.clientId = String(incoming.clientId || "").trim();
+        if (incoming.clientSecret !== undefined) cur.clientSecret = String(incoming.clientSecret || "").trim();
+        if (incoming.redirectUri !== undefined) cur.redirectUri = String(incoming.redirectUri || "").trim();
+        meta.servers[key] = cur;
+      }
+    }
+
     user.store._writeJson(user.store.metaFile, meta);
     sendJSON(res, { ok: true });
   } catch (e) {
@@ -509,12 +729,15 @@ setInterval(() => {
  *   前端请求 /esi/serenity/status/ → 转发到该服 ESI
  *   可选头 X-Eve-Token-Key 指定用哪个已保存的令牌
  */
-async function esiProxy(req, res, url, auth) {
+async function esiProxy(req, res, url, user) {
   const m = url.match(/^\/esi\/([a-z]+)\/(.*)$/);
   if (!m) return sendJSON(res, { ok: false, error: "路径格式应为 /esi/{server}/{path}" }, 400);
   const [, serverKey, rest] = m;
   if (!SERVERS[serverKey]) return sendJSON(res, { ok: false, error: "未知服务器" }, 400);
 
+  // ★ 按目标服务器取凭据：换令牌/刷新令牌要用该服自己的 Client ID，
+  //   用错服的 Client ID 会得到「invalid_client」或回调地址不匹配。
+  const auth = authFor(user, serverKey);
   const cfgS = SERVERS[serverKey];
   // ★ 注意：esiBase 已含 "/latest" 前缀，不能用 new URL(rest, base)（会覆盖路径）
   //   故手工拼接：base + "/" + rest
@@ -608,7 +831,7 @@ const server = http.createServer(async (req, res) => {
     if (url.startsWith("/sso/callback")) return await ssoCallback(req, res, url, q, user);
 
     // ESI 代理
-    if (url.startsWith("/esi/")) return await esiProxy(req, res, url, auth);
+    if (url.startsWith("/esi/")) return await esiProxy(req, res, url, user);
 
     /* ---------- EIV 基准价（工业成本基准，一次返回全量）---------- */
     if (url.startsWith("/api/eiv")) {
@@ -627,7 +850,7 @@ const server = http.createServer(async (req, res) => {
     // 业务接口
     if (url.startsWith("/api/config")) {
       if (req.method === "POST") return await apiConfigSave(req, res, user);
-      return apiConfig(req, res);
+      return apiConfig(req, res, user);
     }
     if (url.startsWith("/api/sync") && req.method === "POST") return await apiSync(req, res, user, auth, profiles);
     if (url.startsWith("/api/profiles")) {
@@ -692,7 +915,7 @@ server.on("error", (err) => {
 server.listen(currentPort, HOST, () => {
   const shown = HOST === "0.0.0.0" ? "本机全部网卡" : HOST;
   console.log("EVE 辅助工具 已在 http://" + shown + ":" + currentPort + " 运行");
-  console.log("授权回调：" + REDIRECT_URI);
+  console.log("授权回调：" + defaultRedirectUri(currentPort));
   console.log("运行模式：" + (MULTI_USER ? "多用户（需注册登录）" : "单用户（本地开发，不校验口令）"));
   console.log("健康检查：http://" + shown + ":" + currentPort + "/healthz");
   if (!CLIENT_ID && !cfg.clientId) {

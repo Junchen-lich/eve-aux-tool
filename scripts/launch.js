@@ -585,6 +585,7 @@ function runTests() {
   const cmds = [
     "src/core/skills.test.js",
     "src/core/m2.test.js",
+    "src/core/auth-callback.test.js",
     "src/core/user-store.test.js",
     "src/data/store.test.js",
     "src/ui/calc-core.test.js"

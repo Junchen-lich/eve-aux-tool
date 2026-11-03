@@ -118,6 +118,7 @@ class UserStore {
     this.metaFile = path.join(this.dir, "meta.json");
     this.authFile = path.join(this.dir, "auth.json");
     this.profilesFile = path.join(this.dir, "profiles.json");
+    this.pendingFile = path.join(this.dir, "pending.json");
   }
 
   _ensureDir() {
@@ -217,6 +218,41 @@ class UserStore {
 
   saveProfiles(profiles) {
     this._writeJson(this.profilesFile, profiles || {});
+  }
+
+  /* ---------------- 待完成授权 ---------------- */
+
+  /**
+   * 记录一次发起的授权（state → 服务器与校验器）。
+   * 回调时凭 state 找回是哪一服，从而用该服自己的 Client ID 换令牌。
+   */
+  savePending(state, info) {
+    if (!state) return;
+    const all = this._readJson(this.pendingFile, {});
+    all[state] = Object.assign({ createdAt: Date.now() }, info || {});
+    // 清理 15 分钟前的过期记录
+    const now = Date.now();
+    for (const k of Object.keys(all)) {
+      if (now - (all[k].createdAt || 0) > 15 * 60 * 1000) delete all[k];
+    }
+    this._writeJson(this.pendingFile, all);
+  }
+
+  /** 取一次待完成授权的记录 */
+  pending(state) {
+    if (!state) return null;
+    const all = this._readJson(this.pendingFile, {});
+    return all[state] || null;
+  }
+
+  /** 授权完成后清除记录 */
+  clearPending(state) {
+    if (!state) return;
+    const all = this._readJson(this.pendingFile, {});
+    if (all[state]) {
+      delete all[state];
+      this._writeJson(this.pendingFile, all);
+    }
   }
 }
 

@@ -35,7 +35,9 @@
     fav: [],             // 收藏的物品中文名
     lastCalc: null,      // 上次制造核算结果
     pendingBp: null,     // 当前核算的蓝图
-    marketCache: {}      // 行情缓存
+    marketCache: {},      // 行情缓存
+    cfg: null,            // /api/config 返回（各服状态与回调地址）
+    credentials: {}       // 各服已保存的 Client ID / Secret / 回调地址
   };
 
   /* ================================================================ *
@@ -1195,6 +1197,88 @@
     });
     body.appendChild(kv);
 
+    /* ---------- 授权凭据（分服独立配置）---------- */
+    body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:24px 0 10px", text: "授权凭据（各服独立）" }));
+    body.appendChild(el("div", { class: "tip", html:
+      "三套集群的应用<b>互不通用</b>：欧服在 <code>developers.eveonline.com</code> 注册，" +
+      "国服在网易开发者后台注册；<b>曙光服是独立集群，需单独注册</b>，不能与晨曦共用 Client ID。" +
+      "<br>回调地址必须与后台登记的<b>逐字符一致</b>（协议、主机、端口、路径、末尾斜杠都算），" +
+      "否则网易会返回 <code>redirect URL does not match</code>。" +
+      "<br>⚠ 网易的官方公共 Client ID <code>bc90aa49…</code> 只登记了官方落地页，" +
+      "用它做本地授权必然失败，建议换成自己注册的。"
+    }));
+
+    var cfgBox = el("div", { class: "card", style: "margin-top:12px" });
+    var cfgBd = el("div", { class: "card-bd" });
+    var srvList = (S.cfg && S.cfg.servers) ? S.cfg.servers : [];
+
+    srvList.forEach(function (srv) {
+      var box = el("div", { style: "border-bottom:1px solid var(--line);padding:14px 0" });
+
+      var head = el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap" }, [
+        el("b", { text: srv.label }),
+        el("span", {
+          class: "tag " + (srv.clientIdConfigured ? "neg" : ""),
+          text: srv.clientIdConfigured ? "已配置 Client ID" : "未配置"
+        }),
+        srv.usingOfficialClientId ? el("span", { class: "tag neg", text: "网易官方公共 ID（回调地址受限）" }) : null,
+        el("span", { class: "muted", style: "font-size:12px", text: "当前回调：" + (srv.redirectUri || "—") })
+      ]);
+      box.appendChild(head);
+
+      var inputs = {};
+
+      function addField(label, key, placeholder, isPassword) {
+        var wrap = el("div", { style: "margin:8px 0" });
+        wrap.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: label }));
+        var i = el("input", {
+          type: isPassword ? "password" : "text",
+          placeholder: placeholder || "",
+          style: "width:100%"
+        });
+        // 回显已保存的值（Client ID 与回调地址可回显；secret 不回传）
+        if (key === "clientId" && srv.clientId) i.value = srv.clientId;
+        else if (key === "redirectUri" && srv.redirectUri) i.value = srv.redirectUri;
+        else if (key === "clientSecret") i.placeholder = srv.clientSecretSet ? "已设置（留空则不修改）" : "留空即可（PKCE 不需要）";
+        i.value = (S.credentials && S.credentials[srv.key] && S.credentials[srv.key][key]) || i.value;
+        inputs[key] = i;
+        wrap.appendChild(i);
+        return wrap;
+      }
+
+      box.appendChild(addField("Client ID", "clientId",
+        srv.key === "tranquility" ? "在 developers.eveonline.com 注册后填入" : "在网易开发者后台为该服注册后填入"));
+      box.appendChild(addField("Client Secret（选填，PKCE 不需要）", "clientSecret", "留空即可", true));
+      box.appendChild(addField("回调地址（须与后台登记完全一致）", "redirectUri", srv.redirectUri || ""));
+
+      var btn = el("button", { class: "btn sm pri", text: "保存该服配置" });
+      btn.addEventListener("click", function () {
+        var payload = {};
+        payload[srv.key] = {
+          clientId: inputs.clientId.value.trim(),
+          clientSecret: inputs.clientSecret.value.trim(),
+          redirectUri: inputs.redirectUri.value.trim()
+        };
+        btn.disabled = true;
+        api("/api/config", { method: "POST", body: JSON.stringify({ servers: payload }) })
+          .then(function () {
+            btn.disabled = false;
+            btn.textContent = "已保存 ✓";
+            setTimeout(function () { btn.textContent = "保存该服配置"; }, 1600);
+            loadConfig();
+          })
+          .catch(function (e) {
+            btn.disabled = false;
+            btn.textContent = "保存失败：" + (e && e.message ? e.message : "未知错误");
+          });
+      });
+      box.appendChild(el("div", { style: "margin-top:10px" }, [btn]));
+      cfgBd.appendChild(box);
+    });
+
+    cfgBox.appendChild(cfgBd);
+    body.appendChild(cfgBox);
+
     /* 数据表状态 */
     body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:20px 0 10px", text: "内置数据库" }));
     var tb = el("tbody");
@@ -1231,6 +1315,28 @@
   /* ================================================================ *
    * 服务器与区域
    * ================================================================ */
+
+  /**
+   * 载入 /api/config：各服状态、当前生效的回调地址与已保存的 Client ID。
+   * 保存凭据后需重新调用，以刷新设置页的显示。
+   */
+  function loadConfig() {
+    return api("/api/config").then(function (cfg) {
+      S.cfg = cfg;
+      S.servers = cfg.servers || [];
+      // 回显各服已保存的凭据
+      S.credentials = {};
+      S.servers.forEach(function (sv) {
+        S.credentials[sv.key] = {
+          clientId: sv.clientId || "",
+          redirectUri: sv.redirectUri || ""
+        };
+      });
+      if (S.page === "set") renderSet();
+      return cfg;
+    });
+  }
+
   function serverLabel() {
     var s = S.servers.filter(function (x) { return x.key === S.server; })[0];
     return s ? s.label : S.server;
@@ -1259,6 +1365,7 @@
   };
 
   function switchPage(key) {
+    S.page = key;
     $$("#nav button").forEach(function (b) {
       b.classList.toggle("on", b.dataset.page === key);
     });
@@ -1304,8 +1411,7 @@
     });
 
     // 服务器切换
-    api("/api/config").then(function (cfg) {
-      S.servers = cfg.servers || [];
+    loadConfig().then(function (cfg) {
       var sel = $("#serverSel");
       sel.innerHTML = "";
       S.servers.forEach(function (sv) {

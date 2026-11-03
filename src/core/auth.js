@@ -93,19 +93,64 @@ function deriveKey(secret) {
   return crypto.createHash("sha256").update(String(secret || "")).digest();
 }
 
+/* ------------------------------------------------------------------ *
+ * 网易官方公共 ESI 应用的 Client ID 与回调地址
+ * ------------------------------------------------------------------ */
+const OFFICIAL_CN_CLIENT_ID = "bc90aa496a404724a93f41b4f4e97761";
+const OFFICIAL_CN_REDIRECT_URI = "https://esi.evepc.163.com/ui/oauth2-redirect.html";
+
 /**
  * 把上游返回的英文错误翻译成可操作的中文提示。
  *
  * ★ 实证（2026-11-03）：国服 authorize 在浏览器持有失效网易 Cookie 时
  * 会返回 invalid_request + "Missing Netease token" —— 根因是服务端把
  * 旧 Cookie 当成「已登录」而去做 RealID 绑定校验，与本工具的请求参数无关。
+ *
+ * ★ 实证（2026-11-03）：国服在**登录之后**校验 redirect_uri，
+ *   若 Client ID 登记的回调地址与本工具上报的不一致，返回
+ *   「The redirect URL does not match any of the configured values for this client」。
+ *   最常见的两种成因：
+ *     1) 用的是网易官方公共 Client ID（bc90aa49…），
+ *        它只认 https://esi.evepc.163.com/ui/oauth2-redirect.html
+ *     2) 服务端口被占用后自动 +1 顺延，但回调地址仍按旧端口上报
  */
-function explainAuthError(msg) {  const s = String(msg || "");
+function explainAuthError(msg, ctx) {
+  const s = String(msg || "");
+  ctx = ctx || {};
+
   if (/Missing Netease token|Unable to check RealID/i.test(s)) {
     return "浏览器中残留了失效的网易账号 Cookie，服务端误判为已登录而无法完成实名认证校验。" +
       "请清除 login.evepc.163.com 的 Cookie（或改用无痕窗口 / 另一浏览器）后重新发起授权。" +
       "（原始信息：" + s + "）";
   }
+
+  if (/redirect URL does not match|redirect_uri|invalid_request/i.test(s)
+      && /redirect/i.test(s)) {
+    const lines = [];
+    lines.push("回调地址与该 Client ID 在后台登记的地址不匹配（网易在登录之后才校验 redirect_uri，所以登录前一切正常）。");
+    lines.push("本工具本次上报的回调地址是：" + (ctx.redirectUri || "（未知）"));
+    lines.push("");
+    if (ctx.usingOfficialClientId) {
+      lines.push("★ 你用的是网易官方公共 Client ID（" + OFFICIAL_CN_CLIENT_ID + "）。");
+      lines.push("  它在网易后台只登记了一个回调地址：" + OFFICIAL_CN_REDIRECT_URI);
+      lines.push("  本地工具无法用它做标准授权流程。可选做法：");
+      lines.push("   A. 在「设置」页为该服改填**你自己在网易开发者后台注册的** Client ID，");
+      lines.push("      并把回调地址登记为 " + (ctx.redirectUri || "http://localhost:8657/sso/callback"));
+      lines.push("   B. 沿用官方 Client ID，把回调地址改为 " + OFFICIAL_CN_REDIRECT_URI + "，");
+      lines.push("      授权后从浏览器地址栏取回 #access_token=… 片段（本工具暂不自动解析该片段）。");
+    } else {
+      lines.push("常见成因：");
+      lines.push(" 1) 端口被占用后本工具自动顺延到了别的端口，但你在后台登记的仍是旧端口的地址；");
+      lines.push("    → 请确认「设置」页/启动日志显示的回调地址与后台登记的完全一致（协议、主机、端口、路径都一致）。");
+      lines.push(" 2) 曙光服是独立集群，需要**单独注册**应用，不能与晨曦共用同一个 Client ID；");
+      lines.push("    → 请在网易开发者后台为曙光单独建应用，并把该服的 Client ID 填到「设置」页对应服。");
+      lines.push(" 3) 后台登记的地址末尾多了一个斜杠（http://localhost:8657/sso/callback/ 与 …/sso/callback 不同）；");
+      lines.push("    → 逐字符核对，末尾斜杠也算差异。");
+    }
+    lines.push("（原始信息：" + s + "）");
+    return lines.join("\n");
+  }
+
   if (/invalid_client/i.test(s)) {
     return "Client ID 无效或该服不支持此授权方式。" +
       "国服请使用网易公共 Client ID；欧服需在 developers.eveonline.com 自行注册。" +
@@ -113,10 +158,6 @@ function explainAuthError(msg) {  const s = String(msg || "");
   }
   if (/invalid_grant|expired/i.test(s)) {
     return "授权码已失效或已被使用，请重新发起授权。" +
-      "（原始信息：" + s + "）";
-  }
-  if (/redirect_uri|invalid_request/i.test(s)) {
-    return "回调地址不被该 Client ID 接受，请检查 redirectUri 配置。" +
       "（原始信息：" + s + "）";
   }
   return s;
@@ -239,6 +280,17 @@ class AuthManager {
   /* ---------------- 步骤 1：发起授权 ---------------- */
 
   /**
+   * 构造错误提示用的上下文：本次上报的回调地址 + 是否用了网易官方公共 ID。
+   */
+  _errorCtx(serverKey) {
+    return {
+      serverKey: serverKey || this.serverKey || null,
+      redirectUri: this.redirectUri || null,
+      usingOfficialClientId: String(this.clientId || "").trim().toLowerCase() === OFFICIAL_CN_CLIENT_ID
+    };
+  }
+
+  /**
    * 生成授权 URL
    * @param {string} serverKey 服务器
    * @param {string[]} scopes 申请的 scope
@@ -330,7 +382,8 @@ class AuthManager {
     if (!res.ok) {
       let msg = text;
       try { msg = JSON.parse(text).error_description || JSON.parse(text).error || text; } catch (e) { }
-      throw new Error("令牌交换失败 HTTP " + res.status + "：" + explainAuthError(msg));
+      throw new Error("令牌交换失败 HTTP " + res.status + "：" +
+        explainAuthError(msg, this._errorCtx(pending.serverKey)));
     }
     const data = JSON.parse(text);
     const rec = this._store(data, pending.serverKey);
@@ -390,7 +443,8 @@ class AuthManager {
     if (!res.ok) {
       let msg = text;
       try { msg = JSON.parse(text).error_description || JSON.parse(text).error || text; } catch (e) { }
-      throw new Error("刷新失败 HTTP " + res.status + "：" + explainAuthError(msg));
+      throw new Error("刷新失败 HTTP " + res.status + "：" +
+        explainAuthError(msg, this._errorCtx(rec.serverKey)));
     }
     const data = JSON.parse(text);
     // 刷新时可能不返回新的 refresh_token，需保留旧的
