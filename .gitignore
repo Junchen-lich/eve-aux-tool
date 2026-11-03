@@ -6,6 +6,11 @@ data/sde/facility_rates_*.json
 data/sde/cost_index_*.json
 *.log
 
+# 环境变量（含密钥，绝不入库）
+.env
+.env.local
+*.env
+
 # 系统文件
 .DS_Store
 Thumbs.db

@@ -32,6 +32,10 @@
 │  ├─ skill-map.js        技能映射桥接表（英文名 ↔ typeID ↔ 中文名）
 │  ├─ skills.js           技能效果与计算内核（税率从 JSON 表读）
 │  └─ *.test.js           自检脚本
+├─ deploy/
+│  ├─ systemd/           systemd 服务单元（沙箱加固）
+│  ├─ nginx/             反向代理配置（TLS + 分级限流）
+│  └─ scripts/deploy.sh  一键部署脚本
 ├─ src/data/
 │  ├─ store.js            静态库加载 + 名称解析 + 显示回退链
 │  ├─ fetcher.js          ESI 拉取设施费率/成本指数/EIV/订单/历史
@@ -68,20 +72,51 @@ python3 scripts/build_cn_names.py --xlsx <evedata.xlsx>
 ```bash
 node src/core/skills.test.js       # 计算内核自检（38 项）
 node src/core/esi-client.test.js   # 三服连通性实测（30 项，需联网）
+node src/core/m2.test.js           # 授权与档案（68 项）
+node src/core/m2-e2e.test.js       # 技能同步端到端（17 项，需联网）
 node src/data/store.test.js        # 数据层与命名分离（49 项）
 node src/data/fetcher.test.js      # 数据获取与缓存（19 项，需联网）
+node src/core/user-store.test.js   # 多用户隔离、会话与令牌加密（76 项）
 ```
 
-当前状态：**136 项全部通过**
+当前状态：**297 项全部通过**（离线 231 项 + 需联网 66 项）
 
 ---
 
 ## 运行
 
+### 本地开发（默认）
+
 ```bash
 node server.js
 # 打开 http://localhost:8657
 ```
+
+默认监听 `127.0.0.1`、单用户模式（不校验口令），适合本地开发。
+
+### 服务器部署
+
+```bash
+sudo bash deploy/scripts/deploy.sh
+```
+
+详见 `docs/服务器部署指南.md`。要点：
+
+| 环境变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | 只绑回环，由 Nginx 反代对外 |
+| `PORT` | `8657` | 监听端口 |
+| `BASE_URL` | — | 外部基址，用于推导 SSO 回调 |
+| `EVE_CLIENT_ID` | — | 应用 Client ID |
+| `EVE_MULTI_USER` | 未设 | 设 `1` 启用注册+登录+数据隔离 |
+| `EVE_SALT` | 自动生成 | 服务端盐（迁移服务器时必须保留） |
+| `TRUST_PROXY` | 未设 | 设 `1` 后按 `X-Forwarded-For` 取真实 IP |
+
+**公网部署的两条硬性要求**：
+1. `EVE_MULTI_USER=1` —— 否则任何人都能读你的角色数据
+2. Node 只监听 `127.0.0.1` —— 公网入口唯一且必经 Nginx 的 TLS 与限流
+
+多用户模式下每个账号有独立的数据目录，EVE 令牌以 AES-256-GCM 加密落盘。
 
 首次使用需在「设置」页填写 **Client ID**（在 EVE 开发者后台注册应用，
 回调地址填 `http://localhost:8657/sso/callback`），或设置环境变量 `EVE_CLIENT_ID`。

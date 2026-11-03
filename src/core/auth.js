@@ -54,6 +54,45 @@ function createPkce() {
   return { verifier, challenge, method: "S256" };
 }
 
+/* ------------------------------------------------------------------ *
+ * 令牌落盘加密（AES-256-GCM）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 加密对象为 JSON 文本。
+ * 格式： { __enc: "gcm", iv, tag, data }（均为 base64）
+ */
+function encryptJson(obj, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const text = Buffer.from(JSON.stringify(obj), "utf8");
+  const enc = Buffer.concat([cipher.update(text), cipher.final()]);
+  return {
+    __enc: "gcm",
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    data: enc.toString("base64")
+  };
+}
+
+/** 解密 encryptJson 的产物 */
+function decryptJson(box, key) {
+  if (!box || box.__enc !== "gcm") throw new Error("不是加密数据");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key,
+    Buffer.from(box.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(box.tag, "base64"));
+  const dec = Buffer.concat([
+    decipher.update(Buffer.from(box.data, "base64")),
+    decipher.final()
+  ]);
+  return JSON.parse(dec.toString("utf8"));
+}
+
+/** 从任意字符串派生 32 字节密钥（SHA-256） */
+function deriveKey(secret) {
+  return crypto.createHash("sha256").update(String(secret || "")).digest();
+}
+
 /**
  * 把上游返回的英文错误翻译成可操作的中文提示。
  *
@@ -61,8 +100,7 @@ function createPkce() {
  * 会返回 invalid_request + "Missing Netease token" —— 根因是服务端把
  * 旧 Cookie 当成「已登录」而去做 RealID 绑定校验，与本工具的请求参数无关。
  */
-function explainAuthError(msg) {
-  const s = String(msg || "");
+function explainAuthError(msg) {  const s = String(msg || "");
   if (/Missing Netease token|Unable to check RealID/i.test(s)) {
     return "浏览器中残留了失效的网易账号 Cookie，服务端误判为已登录而无法完成实名认证校验。" +
       "请清除 login.evepc.163.com 的 Cookie（或改用无痕窗口 / 另一浏览器）后重新发起授权。" +
@@ -131,7 +169,11 @@ class AuthManager {
     this.redirectUri = opts.redirectUri || "http://localhost:8657/sso/callback";
     this.serverKey = opts.server || "serenity";
     this.pending = new Map();   // state → { verifier, serverKey, createdAt }
-    this.tokens = this._load();
+    // 令牌落盘加密密钥（服务器部署时提供，磁盘上不存明文令牌）
+    this.encryptionKey = opts.encryptionKey || null;
+    // 绑定的用户存储（多用户隔离）
+    this.store = opts.store || null;
+    this.tokens = this.store ? this._restoreFrom(this.store) : this._load();
   }
 
   /* ---------------- 令牌持久化 ---------------- */
@@ -147,12 +189,51 @@ class AuthManager {
   }
 
   _save() {
+    // 绑定了用户存储 → 走按用户隔离的（可加密的）持久化
+    if (this.store) return this._persistTo(this.store);
     try {
       if (!fs.existsSync(TOKEN_DIR)) fs.mkdirSync(TOKEN_DIR, { recursive: true });
       fs.writeFileSync(TOKEN_FILE, JSON.stringify(this.tokens, null, 2), "utf8");
       // 收紧权限（若平台支持）
       try { fs.chmodSync(TOKEN_FILE, 0o600); } catch (e) { /* Windows 忽略 */ }
     } catch (e) { /* 持久化失败不影响本次会话 */ }
+  }
+
+  /* ---------------- 令牌落盘加密 ---------------- */
+
+  /**
+   * 把令牌写入用户存储。
+   * 服务器部署时启用 AES-256-GCM 加密 —— 磁盘上的 EVE 令牌不再是明文，
+   * 即使文件泄露也无法直接使用。
+   */
+  _persistTo(store) {
+    if (!store) return;
+    const payload = this.encryptionKey
+      ? encryptJson(this.tokens, this.encryptionKey)
+      : this.tokens;
+    try { store.saveTokens(payload); } catch (e) { }
+  }
+
+  /**
+   * 从用户存储读回令牌。
+   * 自动识别明文与密文两种格式（密文带 __enc 标记），兼容迁移期。
+   */
+  _restoreFrom(store) {
+    if (!store) return {};
+    let data;
+    try { data = store.tokens(); } catch (e) { return {}; }
+    if (!data || typeof data !== "object") return {};
+    if (data.__enc) {
+      try {
+        const plain = decryptJson(data, this.encryptionKey);
+        delete plain.__enc;
+        return plain;
+      } catch (e) {
+        console.error("令牌解密失败（可能是 EVE_SALT 已变更）：" + e.message);
+        return {};
+      }
+    }
+    return data;
   }
 
   /* ---------------- 步骤 1：发起授权 ---------------- */
@@ -371,6 +452,9 @@ module.exports = {
   characterIdFromToken,
   decodeToken,
   explainAuthError,
+  encryptJson,
+  decryptJson,
+  deriveKey,
   TOKEN_FILE,
   TOKEN_DIR
 };

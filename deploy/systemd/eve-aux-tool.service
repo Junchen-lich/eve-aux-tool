@@ -1,0 +1,65 @@
+[Unit]
+Description=EVE 辅助工具 —— EVE Online 角色数据与工业核算服务
+Documentation=file:///opt/eve-aux-tool/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eve
+Group=eve
+WorkingDirectory=/opt/eve-aux-tool
+
+# 环境变量：统一放在 .env，用 EnvironmentFile 加载
+# ★ .env 权限须为 600（仅 root 与 eve 可读）
+EnvironmentFile=/opt/eve-aux-tool/.env
+Environment=NODE_ENV=production
+
+# 启动命令
+ExecStart=/usr/bin/node server.js
+
+# 重启策略：异常退出后 5 秒重启，连续失败 5 次则放弃（避免疯狂重启打满日志）
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# 优雅停机：给足时间让在途请求完成
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# ---------- 安全加固 ----------
+# 服务只需要读写自己的目录，其余一律禁止
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# 只有 用户数据 目录可写（令牌与角色档案所在）
+ReadWritePaths=/opt/eve-aux-tool/用户数据
+
+# 资源限制：与 .wslconfig 的开发机配置对应，服务器按实际规格调整
+LimitNOFILE=65535
+
+# 日志：交给 journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=eve-aux-tool
+
+[Install]
+WantedBy=multi-user.target
