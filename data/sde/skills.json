@@ -1,0 +1,70 @@
+{
+  "_meta": {
+    "version": "0.1.0",
+    "updated": "2026-11-03",
+    "note": "技能效果数值属游戏机制常量，不在 SDE 静态数据中，必须人工维护并随游戏版本核对。",
+    "sources": [
+      "CCP DevBlog《EVE Industry - All you want to know》— 工业理论/高级工业理论/ME/TE",
+      "EVE 中文维基《技能/生产》— 工业理论 4%/级、高级工业理论 3%/级",
+      "CCP 支持中心《Material Efficiency Research》— ME 每级 1%、取整规则",
+      "EVE 中文维基《技能/生产》— 提炼学概论 3%/级、提炼效率理论 2%/级"
+    ],
+    "reviewTrigger": "CCP 版本公告提到工业/技能变更；或用户反馈数值与游戏内显示不符"
+  },
+  "skills": [
+    { "id": "acct", "nameEn": "Accounting", "typeId": 16622, "nameZh": "会计学", "group": "贸易",
+      "effect": "市场销售税每级 -0.55%（相对基础值的 11%）", "sellTaxPerLevel": 0.11, "source": "CCP 支持中心《Broker Fee and Sales Tax》" },
+    { "id": "broker_rel", "nameEn": "Broker Relations", "typeId": 3446, "nameZh": "经纪人关系学", "group": "贸易",
+      "effect": "经纪费每级 -0.3%", "brokerFeePerLevel": -0.003, "source": "CCP 支持中心《Broker Fee and Sales Tax》" },
+
+    { "id": "ind", "nameEn": "Industry", "typeId": 3380, "nameZh": "工业理论", "group": "生产",
+      "effect": "制造时间每级 -4%", "manufacturingTimePerLevel": -0.04, "source": "CCP DevBlog《EVE Industry》" },
+    { "id": "advind", "nameEn": "Advanced Industry", "typeId": 3388, "nameZh": "高级工业理论", "group": "生产",
+      "effect": "所有制造与研究时间每级 -3%", "allTimePerLevel": -0.03, "source": "CCP DevBlog《EVE Industry》" },
+    { "id": "massprod", "nameEn": "Mass Production", "typeId": 3387, "nameZh": "批量生产学", "group": "生产",
+      "effect": "同时制造槽每级 +1", "slotsPerLevel": 1, "source": "EVE 中文维基《技能/生产》" },
+    { "id": "advmassprod", "nameEn": "Advanced Mass Production", "typeId": null, "nameZh": "高级量产技术", "group": "生产",
+      "effect": "同时制造槽每级 +1（需批量生产学 V）", "slotsPerLevel": 1, "source": "EVE 中文维基《技能/生产》" },
+    { "id": "supplychain", "nameEn": "Supply Chain Management", "typeId": null, "nameZh": "供给链管理", "group": "生产",
+      "effect": "远程制造范围每级 +5 跳", "remoteJumpsPerLevel": 5, "source": "EVE 中文维基《技能/生产》" },
+
+    { "id": "refine", "nameEn": "Reprocessing", "typeId": 3385, "nameZh": "提炼学概论", "group": "提炼",
+      "effect": "精炼产出每级 +3%", "refineYieldPerLevel": 0.03, "source": "EVE 中文维基《技能/生产》" },
+    { "id": "refining", "nameEn": "Reprocessing Efficiency", "typeId": 3389, "nameZh": "提炼效率理论", "group": "提炼",
+      "effect": "精炼产出每级 +2%", "refineYieldPerLevel": 0.02, "source": "EVE 中文维基《技能/生产》" },
+
+    { "id": "lab", "nameEn": "Laboratory Operation", "typeId": 3406, "nameZh": "实验室运作理论", "group": "科研",
+      "effect": "研发/拷贝槽每级 +1", "slotsPerLevel": 1, "source": "EVE 中文维基《技能/生产》" },
+    { "id": "sci", "nameEn": "Science", "typeId": 3402, "nameZh": "科学原理", "group": "科研",
+      "effect": "材料效率研究/拷贝/发明速度每级 +5%", "researchSpeedPerLevel": 0.05,
+      "appliesTo": [4, 5, 8], "source": "EVE 论坛/官方技能说明" },
+    { "id": "metal", "nameEn": "Metallurgy", "typeId": 3409, "nameZh": "冶金学", "group": "科研",
+      "effect": "材料效率研究速度每级 +5%", "researchSpeedPerLevel": 0.05,
+      "appliesTo": [4], "source": "EVE 论坛/官方技能说明" },
+    { "id": "res", "nameEn": "Research", "typeId": 3403, "nameZh": "研究概论", "group": "科研",
+      "effect": "时间效率研究速度每级 +5%", "researchSpeedPerLevel": 0.05,
+      "appliesTo": [3], "source": "EVE 论坛/官方技能说明" },
+
+    { "id": "pi_customs", "nameEn": "Customs Code Expertise", "typeId": null, "nameZh": "报关代码专家", "group": "贸易",
+      "effect": "行星工业 NPC 税每级 -10%", "piTaxPerLevel": -0.10, "source": "EVEU Wiki《Tax》" }
+  ],
+  "activityIds": {
+    "_note": "工业活动 ID。★ 反应是 11 不是 9（SDE industryActivity 中 act=11 覆盖 120 条，无 act=9）",
+    "manufacturing": 1,
+    "copying": 5,
+    "researchTimeEfficiency": 3,
+    "researchMaterialEfficiency": 4,
+    "invention": 8,
+    "reaction": 11
+  },
+  "meTe": {
+    "_note": "ME 每级 -1%（最高 10 级），TE 每级 -2%（最高 20 级）",
+    "meMaxLevel": 10,
+    "mePerLevel": 0.01,
+    "teMaxLevel": 20,
+    "tePerLevel": 0.02,
+    "rounding": "ceil_to_next_significant_digit",
+    "appliesToWholeJob": true,
+    "source": "CCP 支持中心《Material Efficiency Research》"
+  }
+}

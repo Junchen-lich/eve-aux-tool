@@ -1,0 +1,64 @@
+{
+  "_meta": {
+    "version": "0.1.0",
+    "updated": "2026-11-03",
+    "note": "税率与工业费基准，属游戏机制常量，必须人工维护并随游戏版本核对。",
+    "sources": [
+      "CCP 支持中心《Broker Fee and Sales Tax》— 销售税 7.5% 基础、经纪费 3% 基础",
+      "EVEU Wiki《Tax》— 经纪费含声望项、玩家建筑例外",
+      "CCP 版本 22.02 补丁说明（2025-03-12）— 销售税由 4% 上调至 7.5%",
+      "EVE 中文维基《制造》— 工业费 = 估算价值 × 成本指数"
+    ],
+    "reviewTrigger": "CCP 版本公告提到税率或工业费变更"
+  },
+  "salesTax": {
+    "base": 0.075,
+    "perLevel": 0.11,
+    "formula": "base × (1 − perLevel × 会计学等级)",
+    "skill": "acct",
+    "skillNameZh": "会计学",
+    "floor": 0,
+    "note": "★ 乘法口径。验算：7.5% × (1 − 0.11×5) = 3.375%，与官方『reduced down to 3.37%』吻合。旧基础值时代 5% × 0.45 = 2.25% 也与当年官方值吻合，故系数 0.11 正确。基础值在版本 22.02（2025-03-12）由 4% 上调至 7.5%。",
+    "source": "CCP 支持中心《Broker Fee and Sales Tax》"
+  },
+  "brokerFee": {
+    "base": 0.03,
+    "perLevel": 0.003,
+    "formula": "base − perLevel × 经纪人关系学等级",
+    "skill": "broker_rel",
+    "skillNameZh": "经纪人关系学",
+    "floor": 0.01,
+    "factionStandingPerPoint": -0.0003,
+    "corpStandingPerPoint": -0.0002,
+    "structureOwnerSets": true,
+    "note": "★ 减法口径。官方公式：3% − 0.3%×BrokerRelationsLevel − 0.03%×FactionStanding − 0.02%×CorpStanding，最低 1%。玩家建筑由业主设定，技能与声望均不影响。",
+    "source": "CCP 支持中心《Broker Fee and Sales Tax》"
+  },
+  "planetaryTax": {
+    "base": 0.10,
+    "perLevel": -0.10,
+    "skill": "pi_customs",
+    "skillNameZh": "报关代码专家",
+    "note": "NPC 基础税 10%，报关代码专家每级 -10%（5 级 → 5%）。POCO 业主另可加收，合计最高 100%。低安/nullsec/虫洞不适用。",
+    "source": "EVEU Wiki《Tax》"
+  },
+  "reprocessingTax": {
+    "base": 0.05,
+    "min": 0.0,
+    "note": "炼化税基础 5%，按对空间站所有者的声望可降至 0%（需 6.67 声望）。",
+    "source": "EVEU Wiki《Tax》"
+  },
+  "jobCost": {
+    "formula": "物品估算价值 × (星系成本指数 + 设施税 + SCC附加费 + Alpha克隆税)",
+    "costIndexSource": "ESI GET /industry/systems/",
+    "facilitySource": "ESI GET /industry/facilities/",
+    "estimatedValueSource": "ESI GET /markets/prices/ (EIV 调整后价格)",
+    "note": "★ 按「估算价值」而非材料实际成本计算，与直觉不同，界面必须明示。",
+    "source": "EVE 中文维基《制造》"
+  },
+  "corporationTax": {
+    "npc": 0.11,
+    "note": "NPC 公司税固定 11%；玩家公司自行设定。仅对赏金/任务等奖励征收，不作用于市场销售。",
+    "source": "EVEU Wiki《Tax》"
+  }
+}

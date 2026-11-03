@@ -1,0 +1,17 @@
+# 运行期与用户数据（不入库）
+用户数据/
+data/cache/
+data/sde/eiv_*.json
+data/sde/facility_rates_*.json
+data/sde/cost_index_*.json
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
