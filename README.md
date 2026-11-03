@@ -23,6 +23,8 @@
 ## 目录
 
 ```
+├─ EVE辅助工具.cmd          一键入口（Windows，双击即用）
+├─ EVE辅助工具.sh           一键入口（macOS / Linux / WSL）
 ├─ server.js              本地服务（静态托管 + SSO 流程 + ESI 代理 + 业务接口）
 ├─ src/core/
 │  ├─ servers.js          三服配置、57 个 ESI 端点、14 组 scope
@@ -41,6 +43,7 @@
 │  ├─ fetcher.js          ESI 拉取设施费率/成本指数/EIV/订单/历史
 │  └─ *.test.js
 ├─ scripts/
+│  ├─ launch.js           本地启动器核心（菜单/端口探测/健康检查/进程管理）
 │  ├─ build_sde.py        从 SDE 构建 7 张表
 │  ├─ build_cn_names.py   从官方 evedata.xlsx 构建 5 张表
 │  └─ _xlsx_reader.py     纯标准库 xlsx 读取器（替代 openpyxl）
@@ -85,7 +88,22 @@ node src/core/user-store.test.js   # 多用户隔离、会话与令牌加密（7
 
 ## 运行
 
-### 本地开发（默认）
+### 一键脚本（推荐）
+
+| 平台 | 操作 |
+| --- | --- |
+| Windows | 双击 `EVE辅助工具.cmd` |
+| macOS / Linux / WSL | `./EVE辅助工具.sh` |
+
+进入交互菜单：启动（前台/后台）、停止、重启、查看状态、打开界面、查看日志、运行自检。
+
+也可以直接下命令：`start` / `bg` / `stop` / `restart` / `status` / `open` / `logs` / `test`，
+常用选项 `--port 8660`、`--multi-user`、`--no-browser`。
+
+启动器会自动探测空闲端口、健康检查确认就绪后才拉起浏览器，已在运行时不重复启动，
+多实例可并行且能一次全部停止。详见 [docs/本地使用说明.md](docs/本地使用说明.md)。
+
+### 手动启动
 
 ```bash
 node server.js
