@@ -268,6 +268,22 @@ async function testManualChannel() {
   try { await (b3.completeManual("", "shuguang")); } catch (e) { err2 = e.message; }
   ok(err2.includes("请粘贴"), "空内容给出明确提示");
 
+  // 9h. ★ 误把授权链接本身粘回来（实测最常见的误操作）
+  const authLink = "https://login-infinity.evepc.163.com/v2/oauth/authorize/?" +
+    "response_type=code&client_id=" + OFFICIAL_CN_CLIENT_ID +
+    "&redirect_uri=https%3A%2F%2Fali-esi.evepc.163.com%2Fui%2Foauth2-redirect.html" +
+    "&scope=esi-skills.read_skills.v1&state=TESTSTATE" +
+    "&realm=ESI&device_id=eve-aux-tool" +
+    "&code_challenge=LYToqXjKu8kK18VZ087fFQTEMAxLuvTxA9uAgY4YdAI&code_challenge_method=S256";
+  let err3 = "";
+  try { await (b3.completeManual(authLink, "shuguang")); } catch (e) { err3 = e.message; }
+  ok(err3.includes("授权链接"), "★ 识别出「粘贴的是授权链接」", err3.split("\n")[0].slice(0, 30));
+  ok(err3.includes("授权结果"), "指出正确的是什么");
+  ok(err3.includes("ali-esi.evepc.163.com"), "给出正确地址的域名");
+  ok(err3.includes("无痕"), "★ 给出了绕开失效 Cookie 的办法（无痕窗口）");
+  ok(err3.includes("Missing Netease token"), "点明了失效 Cookie 的典型报错");
+  ok(err3.includes("login-infinity"), "提示曙光服的独立登录集群");
+
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { }
 }
 

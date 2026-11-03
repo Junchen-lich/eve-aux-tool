@@ -456,8 +456,10 @@
     var body = $("#charBody");
     var scope = "esi-skills.read_skills.v1";
 
-    var panel = el("div", { class: "card", style: "margin-top:16px" });
-    var bd = el("div", { class: "card-bd" });
+    // ⚠ #charBody 本身就是 .card-bd，这里不能再套 .card > .card-bd
+    //   （嵌套 card-bd 会让内容渲染异常）—— 直接用一个普通容器。
+    var panel = el("div", { style: "margin-top:16px;padding-top:14px;border-top:1px solid var(--line)" });
+    var bd = el("div", {});
 
     bd.appendChild(el("div", { style: "font-weight:500;margin-bottom:10px", text: "手动授权（网易官方公共 Client ID）" }));
 
@@ -471,28 +473,59 @@
     srvRow.appendChild(srvSel);
     bd.appendChild(srvRow);
 
-    // 流程说明
-    var steps = el("div", { class: "tip", style: "margin-bottom:12px", html:
-      "<b>步骤 1</b>　点下方「生成授权链接」<br>" +
-      "<b>步骤 2</b>　在浏览器打开链接，登录并同意授权<br>" +
-      "<b>步骤 3</b>　授权后浏览器地址栏会出现带 <code>?code=…</code> 的地址，" +
-      "整段复制，粘贴到下面的输入框，点「完成授权」"
+    // 流程说明 —— 明确区分「授权链接」与「要粘贴的地址」
+    var steps = el("div", { class: "tip", style: "margin-bottom:14px", html:
+      "<b>步骤 1</b>　点下方「生成授权链接」，再点「在浏览器打开」<br>" +
+      "<b>步骤 2</b>　在浏览器里登录网易账号并同意授权<br>" +
+      "<b>步骤 3</b>　授权后浏览器会跳到一个 <b>ali-esi.evepc.163.com</b> 开头的地址" +
+      "（形如 <code>…/oauth2-redirect.html?code=…&state=…</code>），" +
+      "复制<b>那一个</b>，粘贴到下方输入框，点「完成授权」<br>" +
+      "<span style=\"color:var(--warn)\">⚠ 要粘贴的是<b>授权之后</b>的地址，" +
+      "不是步骤 1 生成的那个授权链接 —— 两者长得很像但不是一回事。</span>"
     });
     bd.appendChild(steps);
 
-    // 授权链接区
-    var linkWrap = el("div", { style: "margin-bottom:12px" });
-    var linkInput = el("input", { type: "text", readonly: "readonly", placeholder: "点下方按钮生成…", style: "width:100%" });
+    // ★ 预防性提示：失效 Cookie 是这一步最常见的坑
+    bd.appendChild(el("div", { class: "tip", style: "margin-bottom:14px", html:
+      "<b>若打开后没跳转、而是显示一段 JSON 报错</b>（含 <code>Missing Netease token</code>），" +
+      "说明浏览器里残留了失效的网易 Cookie —— 用<b>无痕窗口</b>打开授权链接即可，" +
+      "或先清除该域名的 Cookie。"
+    }));
+
+    // 授权链接区（明确标注「这是用来打开的，不是用来粘贴的」）
+    var linkWrap = el("div", { style: "margin-bottom:16px" });
+    linkWrap.appendChild(el("div", {
+      style: "font-size:12px;color:var(--fg-2);margin-bottom:4px",
+      text: "① 授权链接 —— 只用来在浏览器打开，不要粘贴到下面的框里"
+    }));
+    var linkInput = el("input", {
+      type: "text", readonly: "readonly",
+      placeholder: "点下方「生成授权链接」…",
+      style: "width:100%;opacity:.75;font-size:12px"
+    });
     linkWrap.appendChild(linkInput);
     var genBtn = el("button", { class: "btn sm", text: "生成授权链接", style: "margin-top:8px" });
     var openBtn = el("button", { class: "btn sm pri", text: "在浏览器打开", style: "margin-top:8px;margin-left:8px" });
-    var genRow = el("div", { style: "margin-top:8px" }, [genBtn, openBtn]);
+    // ★ 无痕窗口备选：浏览器残留失效 Cookie 时唯一可靠的办法
+    var incogBtn = el("button", { class: "btn sm", text: "用无痕窗口打开", style: "margin-top:8px;margin-left:8px" });
+    var genRow = el("div", { style: "margin-top:8px" }, [genBtn, openBtn, incogBtn]);
     linkWrap.appendChild(genRow);
     bd.appendChild(linkWrap);
 
-    // 粘贴区
-    bd.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "步骤 3：把浏览器地址栏的整段地址粘贴到这里" }));
-    var pasteArea = el("textarea", { rows: "3", placeholder: "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…", style: "width:100%" });
+    // 粘贴区（明确标注与授权链接的区别）
+    bd.appendChild(el("div", {
+      style: "font-size:12px;color:var(--fg-2);margin-bottom:4px;font-weight:500",
+      text: "② 授权完成后浏览器里的地址 —— 粘贴到这里"
+    }));
+    bd.appendChild(el("div", {
+      style: "font-size:12px;color:var(--fg-3);margin-bottom:6px",
+      text: "应该是 ali-esi.evepc.163.com 开头、带 ?code=… 的地址"
+    }));
+    var pasteArea = el("textarea", {
+      rows: "3",
+      placeholder: "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…",
+      style: "width:100%"
+    });
     bd.appendChild(pasteArea);
 
     var msg = el("div", { style: "margin-top:10px;font-size:13px" });
@@ -518,19 +551,56 @@
         })
         .catch(function (e) {
           genBtn.disabled = false;
-          msg.textContent = "生成失败：" + e.message;
-          msg.className = "err";
+          msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+            escapeHtml("生成失败：" + e.message) + "</div>";
+          msg.className = "";
         });
     });
 
     openBtn.addEventListener("click", function () {
-      if (!currentUrl) { msg.textContent = "请先生成授权链接"; msg.className = "err"; return; }
+      if (!currentUrl) {
+        msg.innerHTML = "<div class='tip'>请先生成授权链接</div>";
+        msg.className = "";
+        return;
+      }
       window.open(currentUrl, "_blank");
+    });
+
+    incogBtn.addEventListener("click", function () {
+      if (!currentUrl) {
+        msg.innerHTML = "<div class='tip'>请先生成授权链接</div>";
+        msg.className = "";
+        return;
+      }
+      // 浏览器无法可靠地由脚本打开无痕窗口（各浏览器策略不同），
+      // 因此：复制链接 + 提示用户手动在无痕窗口粘贴
+      var copied = false;
+      try {
+        linkInput.select();
+        copied = document.execCommand("copy");
+      } catch (e) { /* 忽略 */ }
+      if (!copied && navigator.clipboard) {
+        navigator.clipboard.writeText(currentUrl).catch(function () { });
+      }
+      msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+        escapeHtml(
+          "授权链接已复制（若复制失败，请手动全选上方输入框复制）。\n\n" +
+          "接下来：\n" +
+          "1) 新开一个**无痕 / 隐私窗口**（Chrome：Ctrl+Shift+N；Edge：Ctrl+Shift+N）\n" +
+          "2) 把刚复制的链接粘贴进无痕窗口的地址栏并回车\n" +
+          "3) 登录并同意授权，地址栏跳到 ali-esi 开头后复制回来\n\n" +
+          "无痕窗口能绕开失效 Cookie 的问题。"
+        ) + "</div>";
+      msg.className = "";
     });
 
     finishBtn.addEventListener("click", function () {
       var pasted = pasteArea.value.trim();
-      if (!pasted) { msg.textContent = "请先粘贴回调地址"; msg.className = "err"; return; }
+      if (!pasted) {
+        msg.innerHTML = "<div class='tip'>请先把<b>授权完成后</b>浏览器里的地址粘贴到这里</div>";
+        msg.className = "";
+        return;
+      }
       finishBtn.disabled = true;
       msg.textContent = "正在换取令牌并同步角色数据…";
       msg.className = "";
@@ -545,7 +615,8 @@
           if (j.sync && j.sync.error) lines.push("⚠ " + j.sync.error);
           else if (j.sync) lines.push("✓ 已同步 " + j.sync.skillCount + " 项技能到本地档案");
           if (j.warning) lines.push(j.warning);
-          msg.innerHTML = "<div class='tip'>" + escapeHtml(lines.join("\n")).replace(/\n/g, "<br>") + "</div>";
+          msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+            escapeHtml(lines.join("\n")) + "</div>";
           // 重新拉档案并刷新界面
           api("/api/profiles").then(function (r) {
             S.profiles = (r && r.profiles) || [];
@@ -558,8 +629,12 @@
         })
         .catch(function (e) {
           finishBtn.disabled = false;
-          msg.textContent = "失败：" + e.message;
-          msg.className = "err";
+          // ★ 错误信息可能很长（分步指引），用可换行的 pre 展示，别截断
+          msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+            escapeHtml(e.message) + "</div>";
+          msg.className = "";
+          // 把焦点还给粘贴框，方便直接改
+          pasteArea.focus();
         });
     });
 

@@ -498,6 +498,31 @@ class AuthManager {
 
     // 3) 授权码流程：拿 code 换令牌
     if (!params.code) {
+      // ★ 识别「用户误把授权链接本身粘回来了」——
+      //   这是手动通道最常见的误操作：授权链接与授权结果是两个完全不同的地址，
+      //   提示不清会让用户反复试同一个错误。
+      if (params.response_type || params.client_id || params.code_challenge) {
+        throw new Error(
+          "你粘贴的是**授权链接**，不是授权结果 —— 这两个是不同的地址。\n" +
+          "\n" +
+          "· 授权链接（你刚生成的那个）：\n" +
+          "    https://…/v2/oauth/authorize/?response_type=code&client_id=…&code_challenge=…\n" +
+          "  它只是用来打开登录页的，本身不含授权码。\n" +
+          "\n" +
+          "· 授权结果（要粘贴的是这个）：\n" +
+          "    https://ali-esi.evepc.163.com/ui/oauth2-redirect.html?code=…&state=…\n" +
+          "  它出现在**登录并同意授权之后**，域名是 ali-esi.evepc.163.com。\n" +
+          "\n" +
+          "⚠ 如果浏览器打开授权链接后**没有跳转**、而是直接显示一段 JSON 报错，\n" +
+          "   那段报错通常含 \"Missing Netease token\"（或 \"Unable to check RealID binding\"），\n" +
+          "   说明浏览器里残留了失效的网易 Cookie。处理办法（任选其一）：\n" +
+          "   A. 用**无痕窗口 / 隐私模式**打开授权链接（最省事，推荐）\n" +
+          "   B. 清除 login-infinity.evepc.163.com（晨曦则 login.evepc.163.com）的 Cookie\n" +
+          "   C. 先打开登录页正常登录一次，再打开授权链接\n" +
+          "\n" +
+          "还有一点：曙光服用独立的登录集群 login-infinity.evepc.163.com，\n" +
+          "需要用**曙光服的账号**登录（与晨曦服账号不通）。");
+      }
       throw new Error(
         "粘贴的内容里没找到 code 或 access_token。\n" +
         "请确认复制的是登录后浏览器地址栏的**完整地址**。");
