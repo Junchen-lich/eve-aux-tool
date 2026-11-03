@@ -707,6 +707,7 @@ function runTests() {
     "src/core/skills.test.js",
     "src/core/m2.test.js",
     "src/core/auth-callback.test.js",
+    "src/core/skill-table.test.js",
     "src/core/user-store.test.js",
     "src/core/server-routes.test.js",
     "src/data/store.test.js",

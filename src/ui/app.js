@@ -203,22 +203,29 @@
     return out;
   }
 
-  var SKILL_LIST = [
-    { id: "acct", name: "会计学", effect: "市场销售税每级 −11%（相对基础值）", group: "贸易" },
-    { id: "broker_rel", name: "经纪人关系学", effect: "经纪费每级 −0.3%", group: "贸易" },
-    { id: "ind", name: "工业理论", effect: "制造时间每级 −4%", group: "生产" },
-    { id: "advind", name: "高级工业理论", effect: "所有制造与研究时间每级 −3%", group: "生产" },
-    { id: "massprod", name: "批量生产学", effect: "同时制造槽每级 +1", group: "生产" },
-    { id: "advmassprod", name: "高级量产技术", effect: "同时制造槽每级 +1（需批量生产学 V）", group: "生产" },
-    { id: "lab", name: "实验室操作", effect: "同时研究/拷贝槽每级 +1", group: "生产" },
-    { id: "advlab", name: "高级实验室技术", effect: "同时研究/拷贝槽每级 +1（需实验室操作 V）", group: "生产" },
-    { id: "refine", name: "提炼学概论", effect: "精炼产出每级 +3%", group: "提炼" },
-    { id: "refining", name: "提炼效率理论", effect: "精炼产出每级 +2%", group: "提炼" },
-    { id: "sci", name: "科学", effect: "研究速度每级 +2%", group: "研究" },
-    { id: "metal", name: "冶金学", effect: "金属产出每级 +2%", group: "生产" },
-    { id: "res", name: "资源管理", effect: "每级 +1 个制造槽（需工业理论 IV）", group: "生产" },
-    { id: "pi_customs", name: "报关代码专家", effect: "行星工业进出口税每级 −10%", group: "行星" }
-  ];
+  /**
+   * 技能列表。
+   *
+   * ★ 唯一来源是 data/sde/skills_zh.json（国服权威名与效果），
+   *   由后端 /api/skills 提供 —— 不在前端再硬编码一份。
+   *   （历史上前端、skill-map.js、skills.js 各有一份，
+   *     彼此矛盾，导致界面显示与国服游戏内不一致。）
+   */
+  var SKILL_LIST = [];
+  var SKILL_LIST_READY = false;
+
+  /** 从后端拉取技能表（页面初始化时调用） */
+  function loadSkillList() {
+    return fetch("/api/skills").then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.skills && j.skills.length) {
+          SKILL_LIST = j.skills;
+          SKILL_LIST_READY = true;
+        }
+        return SKILL_LIST;
+      })
+      .catch(function () { return SKILL_LIST; });
+  }
 
   /* ================================================================ *
    * 页面：角色
@@ -1869,7 +1876,7 @@
       ["market_groups.json", "市场分组"], ["pi_schematics.json", "行星工业配方"],
       ["stations.json", "NPC 空间站"], ["structures.json", "玩家公开建筑"],
       ["item_categories.json", "物品类别映射"],
-      ["skills.json", "技能效果表"], ["tax_config.json", "税率配置"]
+      ["skills_zh.json", "技能效果表（国服）"], ["tax_config.json", "税率配置"]
     ];
     tables.forEach(function (t) {
       tb.appendChild(el("tr", {}, [
@@ -2045,6 +2052,11 @@
 
     // 预载基础数据表
     Promise.all([table("item_names"), table("item_names_en")]).catch(function () { });
+
+    // 预载技能表（国服权威名与效果）—— 拿到后再渲染角色页
+    loadSkillList().then(function () {
+      renderChar();
+    }).catch(function () { });
 
     // 版本号
     fetch("/healthz").then(function (r) { return r.json(); }).then(function (h) {

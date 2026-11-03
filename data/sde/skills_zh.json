@@ -1,0 +1,186 @@
+{
+  "version": "1.1.0",
+  "updated": "2026-11-04",
+  "note": "国服（晨曦/曙光）技能权威表。中文名取自 everef.net 国服技能库；效果描述逐字取自国服 ESI /universe/types/{type_id} 的官方 description，未做二次改写。所有 typeId 均已在国服 ESI 实地验证（name 字段完全匹配）。",
+  "sources": [
+    "国服 ESI https://ali-esi.evepc.163.com/latest/universe/types/{type_id} —— 官方英文名 + 完整效果描述（2026-11-04 逐项核对）",
+    "everef.net/zh/types/{type_id} —— 国服官方中文技能名（2026-11-04 逐项核对）",
+    "国服玩家反馈（2026-11-04）—— 修正中文名：报关代码专家→海关操作专业理论、实验室操作→实验室运作理论、高级实验室技术→高级实验室运作理论"
+  ],
+  "reviewTrigger": "① 用户反馈名称/效果与游戏内不符；② CCP 或网易版本公告提到技能变更；③ ESI 技能接口返回本表未收录的 skill_id（见 unmatched 机制）",
+  "verifiedBy": {
+    "esiTypeId": "typeId 已在国服 ESI 验证，/universe/types/{id} 的 name 字段与本表 nameEn 完全一致",
+    "zh": "中文名取自 everef.net 国服技能库（国服官方译名）",
+    "userConfirmed": "用户已确认的中文名"
+  },
+  "skills": [
+    {
+      "id": "acct",
+      "nameEn": "Accounting",
+      "nameZh": "会计学",
+      "typeId": 16622,
+      "group": "贸易",
+      "effect": "市场销售税每级 −11%（销售税基准值 7.5%，5 级 → 3.375%）",
+      "effectEn": "Proficiency at squaring away the odds and ends of business transactions, keeping the checkbooks tight. Each level of skill reduces sales tax by 11%. Sales tax starts at 7.5%.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "broker_rel",
+      "nameEn": "Broker Relations",
+      "nameZh": "经纪人关系学",
+      "typeId": 3446,
+      "group": "贸易",
+      "effect": "经纪费每级 −0.3%（NPC 站挂单费，按订单总额 3% 计）",
+      "effectEn": "Proficiency at driving down market-related costs. Each level of skill subtracts a flat 0.3% from the costs associated with setting up a market order in a non-player station, which usually come to 3% of the order's total value.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "pi_customs",
+      "nameEn": "Customs Code Expertise",
+      "nameZh": "海关操作专业理论",
+      "typeId": 33467,
+      "group": "行星",
+      "effect": "海关办公室（NPC 站）行星工业进出口税每级 −10%",
+      "effectEn": "Expertise in cutting through the red tape of customs regulations. Reduces Import and Export empire tax in Customs Office.",
+      "verified": "esiTypeId+zh+userConfirmed"
+    },
+    {
+      "id": "ind",
+      "nameEn": "Industry",
+      "nameZh": "工业理论",
+      "typeId": 3380,
+      "group": "生产",
+      "effect": "制造时间每级 −4%",
+      "effectEn": "Allows basic operation of factories. 4% reduction in manufacturing time per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "advind",
+      "nameEn": "Advanced Industry",
+      "nameZh": "高级工业理论",
+      "typeId": 3388,
+      "group": "生产",
+      "effect": "所有制造与研究时间每级 −3%",
+      "effectEn": "Skill at efficiently using industrial facilities. 3% reduction in all manufacturing and research times per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "massprod",
+      "nameEn": "Mass Production",
+      "nameZh": "批量生产学",
+      "typeId": 3387,
+      "group": "生产",
+      "effect": "同时制造槽每级 +1",
+      "effectEn": "Allows the operation of multiple factories. Ability to run 1 additional manufacturing job per level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "advmassprod",
+      "nameEn": "Advanced Mass Production",
+      "nameZh": "高级量产技术",
+      "typeId": 24625,
+      "group": "生产",
+      "effect": "同时制造槽每级 +1（需批量生产学 V）",
+      "effectEn": "Further training in the operation of multiple factories. Ability to run 1 additional manufacturing job per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "supplychain",
+      "nameEn": "Supply Chain Management",
+      "nameZh": "供给链管理",
+      "typeId": 24268,
+      "group": "生产",
+      "effect": "远程制造范围每级 +5 跳（1 级 5 跳，5 级 25 跳）",
+      "effectEn": "Proficiency at starting manufacturing jobs remotely. Without this skill, one can only start jobs within the solar system where one is located. Each level increases the distance at which manufacturing jobs can be started. Level 1 allows for jobs at a range within 5 jumps, and each subsequent level adds 5 more jumps to the range, with a maximum of a 25 jump range.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "lab",
+      "nameEn": "Laboratory Operation",
+      "nameZh": "实验室运作理论",
+      "typeId": 3406,
+      "group": "研究",
+      "effect": "同时研究槽每级 +1",
+      "effectEn": "Allows basic operation of research facilities. Ability to run 1 additional research job per skill level.",
+      "verified": "esiTypeId+zh+userConfirmed"
+    },
+    {
+      "id": "advlab",
+      "nameEn": "Advanced Laboratory Operation",
+      "nameZh": "高级实验室运作理论",
+      "typeId": 24624,
+      "group": "研究",
+      "effect": "同时研究槽每级 +1（需实验室运作理论 V）",
+      "effectEn": "Further training in the operation of multiple laboratories. Ability to run 1 additional research job per skill level.",
+      "verified": "esiTypeId+zh+userConfirmed"
+    },
+    {
+      "id": "sci",
+      "nameEn": "Science",
+      "nameZh": "科学原理",
+      "typeId": 3402,
+      "group": "研究",
+      "effect": "蓝图拷贝速度每级 +5%（发明与拷贝）",
+      "effectEn": "Basic understanding of scientific principles. 5% Bonus to blueprint copying speed per level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "research",
+      "nameEn": "Research",
+      "nameZh": "研究概论",
+      "typeId": 3403,
+      "group": "研究",
+      "effect": "蓝图研究（制造时间）每级 −5%",
+      "effectEn": "Skill at researching more efficient production methods. 5% bonus to blueprint manufacturing time research per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "metal",
+      "nameEn": "Metallurgy",
+      "nameZh": "冶金学",
+      "typeId": 3409,
+      "group": "研究",
+      "effect": "材料效率（ME）研究速度每级 +5%",
+      "effectEn": "Advanced knowledge of mineral composition. 5% Bonus to material efficiency research speed per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "scinet",
+      "nameEn": "Scientific Networking",
+      "nameZh": "科学网络学",
+      "typeId": 24270,
+      "group": "研究",
+      "effect": "远程研究范围每级 +5 跳（1 级 5 跳，5 级 25 跳）",
+      "effectEn": "Skill at running research operations remotely. Without this skill, one can only start jobs within the solar system where one is located. Each level increases the distance at which research projects can be started.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "refine",
+      "nameEn": "Reprocessing",
+      "nameZh": "提炼学概论",
+      "typeId": 3385,
+      "aliasEn": ["Refining", "提炼"],
+      "group": "提炼",
+      "effect": "矿石与冰提炼产出每级 +3%",
+      "effectEn": "Skill at using reprocessing facilities in station, outposts and starbases to break ores and ice down into refined products. 3% bonus to ore and ice reprocessing yield per skill level.",
+      "verified": "esiTypeId+zh"
+    },
+    {
+      "id": "refining",
+      "nameEn": "Reprocessing Efficiency",
+      "nameZh": "提炼效率理论",
+      "typeId": 3389,
+      "group": "提炼",
+      "effect": "矿石与冰提炼产出每级 +2%",
+      "effectEn": "Advanced skill at using reprocessing facilities in station, outposts and starbases to break ores and ice down into refined products. 2% bonus to ore and ice reprocessing yield per skill level.",
+      "verified": "esiTypeId+zh"
+    }
+  ],
+  "aliasNotes": [
+    "「提炼学概论 / 提炼效率理论」的官方英文名是 Reprocessing / Reprocessing Efficiency（SDE 旧名 Refining 已废弃），但国服沿用中文译名，因此英文名以 ESI 为准、中文名以国服为准。",
+    "「科学原理」(Science, typeId 3402) 与「研究概论」(Research, typeId 3403) 是两个不同技能：前者加蓝图拷贝速度，后者减蓝图研究时间。「冶金学」(Metallurgy) 加的是材料效率研究速度 —— 三者常被混为一谈。",
+    "「海关操作专业理论」的官方英文名是 Customs Code Expertise（不是 Pi Customs，也不是 Customs Office）。",
+    "★ 原表中的「资源管理」(Resource Management) 已移除 —— 实测国服 ESI 类型表与 everef 国服技能库均**无此技能**，国服未实装（其「每设施额外制造槽」的效果在国服由「批量生产学 / 高级量产技术」承担）。若日后国服补上该技能，可按本表格式补入 typeId。",
+    "★ 手动填写技能面板与本表共用同一份数据 —— 面板里 14 项的 id 与本表 id 一致，保存后按 id 写回档案。"
+  ]
+}

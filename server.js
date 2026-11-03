@@ -642,6 +642,31 @@ async function apiSkillsManual(req, res, user, profiles) {
 }
 
 /**
+ * GET /api/skills —— 技能表（国服权威中文名与效果）
+ *
+ * ★ 前端不再硬编码技能列表 —— 统一从 data/sde/skills_zh.json 取，
+ *   避免「前端 / skill-map.js / skills.js 三处定义互相矛盾」。
+ */
+function apiSkills(res) {
+  try {
+    const skillMap = require("./src/core/skill-map.js");
+    sendJSON(res, {
+      ok: true,
+      skills: skillMap.SKILL_TABLE.map(s => ({
+        id: s.id,
+        name: s.nameZh,
+        nameEn: s.nameEn,
+        effect: s.effect,
+        group: s.group,
+        typeId: s.typeId
+      }))
+    });
+  } catch (e) {
+    sendJSON(res, { ok: false, error: "技能表读取失败：" + e.message }, 500);
+  }
+}
+
+/**
  * GET /api/profiles —— 角色档案列表（前台中文展示） */
 function apiProfiles(req, res, profiles) {
   sendJSON(res, { ok: true, profiles: profiles.list() });
@@ -1083,6 +1108,9 @@ const server = http.createServer(async (req, res) => {
     if (url.startsWith("/api/config")) {
       if (req.method === "POST") return await apiConfigSave(req, res, user);
       return apiConfig(req, res, user);
+    }
+    if (url.startsWith("/api/skills")) {
+      return apiSkills(res);
     }
     if (url.startsWith("/api/sync") && req.method === "POST") return await apiSync(req, res, user, auth, profiles);
     if (url.startsWith("/api/skills/manual") && req.method === "POST") {

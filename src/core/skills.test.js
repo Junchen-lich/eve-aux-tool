@@ -44,7 +44,7 @@ eq(K.manufacturingTimeMult({ ind: 5, advind: 5 }), 0.68, "双 5 级 = 68%");
 
 section("【研究速度】");
 eq(K.researchTimeMult({}, 3), 1, "TE 研究 0 级 = 100%");
-eq(K.researchTimeMult({ res: 5 }, 3), 0.75, "TE 研究(研究概论5) = 75%");
+eq(K.researchTimeMult({ research: 5 }, 3), 0.75, "TE 研究(研究概论5) = 75%");
 eq(K.researchTimeMult({ sci: 5, metal: 5 }, 4), 0.75 * 0.75, "ME 研究(科学5+冶金5) = 56.25%");
 eq(K.researchTimeMult({ sci: 5 }, 5), 0.75, "拷贝(科学5) = 75%");
 eq(K.researchTimeMult({ sci: 5 }, 8), 0.75, "发明(科学5) = 75%");

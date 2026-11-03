@@ -28,39 +28,24 @@
 
 /* ------------------------------------------------------------------ *
  * 技能定义
- * typeID 为欧服 ESI 技能 ID；国服 typeID 体系不同，需另建映射表
+ *
+ * ★ 技能名/效果/typeID 的**唯一来源**是 data/sde/skills_zh.json，
+ *   本文件不再硬编码 —— 避免「三处定义互相矛盾」。
+ *   （历史上 skills.js / skill-map.js / app.js 各有一份，
+ *     导致界面显示的技能名与国服游戏内不一致。）
+ *
+ * typeID 为国服 ESI 技能 ID（三服通用，实测国服与欧服 typeID 一致）。
  * ------------------------------------------------------------------ */
-const SKILLS = [
-  { id: "acct",       typeId: 16622, name: "会计学",        nameEn: "Accounting",
-    effect: "市场销售税每级 -0.55%", group: "贸易" },
-  { id: "broker_rel", typeId: 3446,  name: "经纪人关系学",  nameEn: "Broker Relations",
-    effect: "经纪费每级 -0.3%", group: "贸易" },
-
-  { id: "ind",        typeId: 3380,  name: "工业理论",      nameEn: "Industry",
-    effect: "制造时间每级 -4%", group: "生产" },
-  { id: "advind",     typeId: 3388,  name: "高级工业理论",  nameEn: "Advanced Industry",
-    effect: "所有制造与研究时间每级 -3%", group: "生产" },
-  { id: "massprod",   typeId: 3387,  name: "批量生产学",    nameEn: "Mass Production",
-    effect: "同时制造槽每级 +1", group: "生产" },
-  { id: "advmassprod", typeId: null, name: "高级量产技术",  nameEn: "Advanced Mass Production",
-    effect: "同时制造槽每级 +1（需批量生产学 V）", group: "生产" },
-  { id: "supplychain", typeId: null, name: "供给链管理",    nameEn: "Supply Chain Management",
-    effect: "远程制造范围每级 +5 跳", group: "生产" },
-
-  { id: "refine",     typeId: 3385,  name: "提炼学概论",    nameEn: "Refining",
-    effect: "精炼产出每级 +3%", group: "提炼" },
-  { id: "refining",   typeId: 3389,  name: "提炼效率理论",  nameEn: "Reprocessing Efficiency",
-    effect: "精炼产出每级 +2%", group: "提炼" },
-
-  { id: "lab",        typeId: 3406,  name: "实验室运作理论", nameEn: "Laboratory Operation",
-    effect: "研发/拷贝槽每级 +1", group: "科研" },
-  { id: "sci",        typeId: 3402,  name: "科学原理",      nameEn: "Science",
-    effect: "材料效率研究/拷贝/发明速度每级 +5%", group: "科研" },
-  { id: "metal",      typeId: 3409,  name: "冶金学",        nameEn: "Metallurgy",
-    effect: "材料效率研究速度每级 +5%", group: "科研" },
-  { id: "res",        typeId: 3403,  name: "研究概论",      nameEn: "Research",
-    effect: "时间效率研究速度每级 +5%", group: "科研" }
-];
+const SKILLS = require("./skill-map.js").SKILL_TABLE.map(function (s) {
+  return {
+    id: s.id,
+    typeId: s.typeId,
+    name: s.nameZh,
+    nameEn: s.nameEn,
+    effect: s.effect,
+    group: s.group
+  };
+});
 
 /* ------------------------------------------------------------------ *
  * 工业活动 ID（SDE industryActivity 与 ESI 的语义）
@@ -172,16 +157,26 @@ function manufacturingTimeMult(skills) {
 /**
  * 研究时间系数
  * act: 3=时间效率研究(TE) 4=材料效率研究(ME) 5=拷贝 8=发明
- * 官方：ME 研究受「科学原理 + 冶金学」，TE 研究受「研究概论」，
- *       拷贝与发明受「科学原理」
+ *
+ * ★ 官方 ESI 描述（2026-11-04 核对）：
+ *   Science (3402)「科学原理」   → 5% Bonus to blueprint copying speed per level
+ *                                 （影响**拷贝**与**发明**）
+ *   Research (3403)「研究概论」  → 5% bonus to blueprint manufacturing time research
+ *                                 （影响**时间效率研究 TE**）
+ *   Metallurgy (3409)「冶金学」  → 5% Bonus to material efficiency research speed
+ *                                 （影响**材料效率研究 ME**）
+ *   三者是三个不同技能，作用对象各不相同，不可混用。
  */
 function researchTimeMult(skills, act) {
   let f = 1;
   if (act === ACTIVITY.RESEARCH_MATERIAL) {
+    // 材料效率研究（ME）：受「科学原理 + 冶金学」
     f = (1 - 0.05 * lv(skills, "sci")) * (1 - 0.05 * lv(skills, "metal"));
   } else if (act === ACTIVITY.RESEARCH_TIME) {
-    f = (1 - 0.05 * lv(skills, "res"));
+    // 时间效率研究（TE）：受「研究概论」
+    f = (1 - 0.05 * lv(skills, "research"));
   } else if (act === ACTIVITY.COPYING || act === ACTIVITY.INVENTION) {
+    // 拷贝与发明：受「科学原理」
     f = (1 - 0.05 * lv(skills, "sci"));
   }
   return Math.max(0.2, f);
@@ -192,9 +187,12 @@ function manufacturingSlots(skills) {
   return 1 + lv(skills, "massprod") + lv(skills, "advmassprod");
 }
 
-/** 研发/拷贝同时槽数 */
+/**
+ * 研发/拷贝同时槽数
+ * ★ 「实验室运作理论」+1，「高级实验室运作理论」再 +1（需前者 V 级）
+ */
 function labSlots(skills) {
-  return 1 + lv(skills, "lab");
+  return 1 + lv(skills, "lab") + lv(skills, "advlab");
 }
 
 /** 精炼产出加成百分比 */

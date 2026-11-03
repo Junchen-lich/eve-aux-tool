@@ -81,9 +81,12 @@
     return 1 + lv(skills, "massprod") + lv(skills, "advmassprod");
   }
 
-  /** 研发/拷贝同时槽数 */
+  /**
+   * 研发/拷贝同时槽数
+   * ★「实验室运作理论」+1，「高级实验室运作理论」再 +1（需前者 V 级）
+   */
   function labSlots(skills) {
-    return 1 + lv(skills, "lab");
+    return 1 + lv(skills, "lab") + lv(skills, "advlab");
   }
 
   /** 精炼产出加成百分比 */

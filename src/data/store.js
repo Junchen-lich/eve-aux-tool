@@ -34,7 +34,7 @@ const DB_FILES = {
   oreRefine: "ore_refine.json",
   stations: "stations.json",
   structures: "structures.json",
-  skills: "skills.json",
+  skills: "skills_zh.json",
   taxConfig: "tax_config.json",
   facilityRates: "facility_rates.json",
   costIndex: "cost_index.json"

@@ -22,6 +22,47 @@
  */
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+
+const SKILL_FILE = path.join(__dirname, "..", "..", "data", "sde", "skills_zh.json");
+
+/**
+ * 加载权威技能表（data/sde/skills_zh.json）。
+ *
+ * 该 JSON 是技能名/效果/typeID 的**唯一来源**：
+ *   - 中文名以国服游戏内实际显示为准
+ *   - 效果描述直接摘自国服 ESI /universe/types/ 的官方 description
+ *
+ * 读不到时必须抛错 —— 静默返回空表会让所有技能都匹配不上，
+ * 表现为「技能全是 0 级」，比直接报错更难排查。
+ */
+function loadSkillTable() {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(SKILL_FILE, "utf8"));
+  } catch (e) {
+    throw new Error("技能表加载失败：" + SKILL_FILE + " —— " + e.message);
+  }
+  const list = raw && raw.skills;
+  if (!Array.isArray(list) || !list.length) {
+    throw new Error("技能表内容为空或格式不对：" + SKILL_FILE);
+  }
+  return list.map((s) => ({
+    id: s.id,
+    nameEn: s.nameEn,
+    nameZh: s.nameZh,
+    typeId: s.typeId == null ? null : Number(s.typeId),
+    esiSkillId: s.esiSkillId == null ? null : Number(s.esiSkillId),
+    aliasEn: s.aliasEn || [],
+    esiName: s.esiName || s.nameEn,
+    effect: s.effect || "",
+    effectEn: s.effectEn || "",
+    group: s.group || "",
+    verified: s.verified || ""
+  }));
+}
+
 /**
  * 技能定义表
  * id        内部标识（程序内使用，勿改）
@@ -32,82 +73,12 @@
  * effect    效果说明（中文，前台展示）
  * group     分类（中文）
  * esiName   ESI 技能接口使用的 skill_id 对应名称（部分环境仍用旧名）
+ *
+ * ★ 技能定义的**唯一来源**是 data/sde/skills_zh.json —— 本文件不再硬编码。
+ *   改技能名或效果只改那一个 JSON，避免「两处定义互相矛盾」
+ *   （skill-map.js 与 skills.json 曾各说各话，导致界面显示与游戏内不符）。
  */
-const SKILL_TABLE = [
-  {
-    id: "acct", nameEn: "Accounting", typeId: 16622, nameZh: "会计学",
-    aliasEn: ["accounting"], esiName: "Accounting",
-    effect: "市场销售税每级 -0.55%", group: "贸易"
-  },
-  {
-    id: "broker_rel", nameEn: "Broker Relations", typeId: 3446, nameZh: "经纪人关系学",
-    aliasEn: ["broker relations", "broker_rel"], esiName: "Broker Relations",
-    effect: "经纪费每级 -0.3%", group: "贸易"
-  },
-  {
-    id: "ind", nameEn: "Industry", typeId: 3380, nameZh: "工业理论",
-    aliasEn: ["industry"], esiName: "Industry",
-    effect: "制造时间每级 -4%", group: "生产"
-  },
-  {
-    id: "advind", nameEn: "Advanced Industry", typeId: 3388, nameZh: "高级工业理论",
-    aliasEn: ["advanced industry"], esiName: "Advanced Industry",
-    effect: "所有制造与研究时间每级 -3%", group: "生产"
-  },
-  {
-    id: "massprod", nameEn: "Mass Production", typeId: 3387, nameZh: "批量生产学",
-    aliasEn: ["mass production"], esiName: "Mass Production",
-    effect: "同时制造槽每级 +1", group: "生产"
-  },
-  {
-    id: "advmassprod", nameEn: "Advanced Mass Production", typeId: null, nameZh: "高级量产技术",
-    aliasEn: ["advanced mass production"], esiName: "Advanced Mass Production",
-    effect: "同时制造槽每级 +1（需批量生产学 V）", group: "生产"
-  },
-  {
-    id: "supplychain", nameEn: "Supply Chain Management", typeId: null, nameZh: "供给链管理",
-    aliasEn: ["supply chain management"], esiName: "Supply Chain Management",
-    effect: "远程制造范围每级 +5 跳", group: "生产"
-  },
-  {
-    // ★ 官方英文名是 "Reprocessing"（提炼学概论），不是旧的 "Refining"；
-    //   实测 SDE invTypes 与两端 ESI /universe/types/3385 均返回 "Reprocessing"。
-    //   "Refining" 作为别名保留，以兼容旧数据与历史称呼。
-    id: "refine", nameEn: "Reprocessing", typeId: 3385, nameZh: "提炼学概论",
-    aliasEn: ["refining"], esiName: "Reprocessing",
-    effect: "精炼产出每级 +3%", group: "提炼"
-  },
-  {
-    id: "refining", nameEn: "Reprocessing Efficiency", typeId: 3389, nameZh: "提炼效率理论",
-    aliasEn: ["reprocessing efficiency"], esiName: "Reprocessing Efficiency",
-    effect: "精炼产出每级 +2%", group: "提炼"
-  },
-  {
-    id: "lab", nameEn: "Laboratory Operation", typeId: 3406, nameZh: "实验室运作理论",
-    aliasEn: ["laboratory operation"], esiName: "Laboratory Operation",
-    effect: "研发/拷贝槽每级 +1", group: "科研"
-  },
-  {
-    id: "sci", nameEn: "Science", typeId: 3402, nameZh: "科学原理",
-    aliasEn: ["science"], esiName: "Science",
-    effect: "材料效率研究/拷贝/发明速度每级 +5%", group: "科研"
-  },
-  {
-    id: "metal", nameEn: "Metallurgy", typeId: 3409, nameZh: "冶金学",
-    aliasEn: ["metallurgy"], esiName: "Metallurgy",
-    effect: "材料效率研究速度每级 +5%", group: "科研"
-  },
-  {
-    id: "res", nameEn: "Research", typeId: 3403, nameZh: "研究概论",
-    aliasEn: ["research"], esiName: "Research",
-    effect: "时间效率研究速度每级 +5%", group: "科研"
-  },
-  {
-    id: "pi_customs", nameEn: "Customs Code Expertise", typeId: null, nameZh: "报关代码专家",
-    aliasEn: ["customs code expertise"], esiName: "Customs Code Expertise",
-    effect: "行星工业 NPC 税每级 -10%", group: "贸易"
-  }
-];
+const SKILL_TABLE = loadSkillTable();
 
 /* ------------------------------------------------------------------ *
  * 索引构建
