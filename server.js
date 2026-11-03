@@ -36,6 +36,7 @@ const path = require("path");
 const { AuthManager } = require("./src/core/auth.js");
 const { ProfileStore } = require("./src/core/profiles.js");
 const { EsiClient } = require("./src/core/esi-client.js");
+const fetcher = require("./src/data/fetcher.js");
 const { SERVERS, SERVER_ORDER } = require("./src/core/servers.js");
 const {
   UserSpace, signSession, verifySession, parseCookies, LOCAL_USER
@@ -608,6 +609,20 @@ const server = http.createServer(async (req, res) => {
 
     // ESI 代理
     if (url.startsWith("/esi/")) return await esiProxy(req, res, url, auth);
+
+    /* ---------- EIV 基准价（工业成本基准，一次返回全量）---------- */
+    if (url.startsWith("/api/eiv")) {
+      const key = q.server || "serenity";
+      const data = fetcher.eivOf(key);
+      const n = Object.keys(data).length;
+      if (!n) {
+        return sendJSON(res, {
+          ok: false,
+          error: "本地暂无 " + key + " 的 EIV 基准价缓存，可先在「市场」页查询一次以触发拉取"
+        }, 404);
+      }
+      return sendJSON(res, { ok: true, server: key, count: n, prices: data });
+    }
 
     // 业务接口
     if (url.startsWith("/api/config")) {

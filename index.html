@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EVE 辅助工具</title>
+<link rel="stylesheet" href="src/ui/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 顶部栏 ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <span>EVE 辅助工具</span>
+      <span class="ver" id="ver">v0.3.0</span>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button data-page="char" class="on">角色</button>
+      <button data-page="market">市场</button>
+      <button data-page="industry">工业</button>
+      <button data-page="manuf">制造</button>
+      <button data-page="sell">挂单</button>
+      <button data-page="refine">提炼</button>
+      <button data-page="set">设置</button>
+    </nav>
+
+    <div class="topbar-right">
+      <div class="server-sel" id="serverSel"></div>
+      <div class="chip off" id="charChip">
+        <span class="dot"></span><span class="txt" id="charChipTxt">未授权</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ============ 角色 ============ -->
+    <section class="page on" id="page-char">
+      <div class="card">
+        <div class="card-hd">
+          <h2>角色与技能</h2>
+          <span class="sub">技能从 EVE 官方接口同步，自动代入全部核算</span>
+          <span class="spacer"></span>
+          <span id="charSyncInfo" class="sub"></span>
+        </div>
+        <div class="card-bd" id="charBody"></div>
+      </div>
+    </section>
+
+    <!-- ============ 市场 ============ -->
+    <section class="page" id="page-market">
+      <div class="card">
+        <div class="card-hd">
+          <h2>市场行情</h2>
+          <span class="sub">实时买卖单与历史成交</span>
+          <span class="spacer"></span>
+          <div class="seg" id="marketSeg">
+            <button data-v="live" class="on">实时买卖单</button>
+            <button data-v="history">历史成交</button>
+          </div>
+        </div>
+        <div class="card-bd">
+          <div class="row wrap" style="margin-bottom:14px">
+            <input type="text" id="mktSearch" placeholder="输入物品中文名，如 三钛合金 / 月光矿" style="flex:1;min-width:240px">
+            <button class="btn pri" id="mktSearchBtn">查询</button>
+            <button class="btn" id="mktFavBtn">★ 收藏</button>
+          </div>
+          <div id="mktStatus"></div>
+          <div id="mktResult" style="margin-top:14px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><h2>收藏</h2><span class="sub" id="favCount"></span></div>
+        <div class="card-bd tight" id="mktFav"></div>
+      </div>
+    </section>
+
+    <!-- ============ 工业 ============ -->
+    <section class="page" id="page-industry">
+      <div class="card">
+        <div class="card-hd">
+          <h2>工业生产</h2>
+          <span class="sub">星系成本指数与设施分布</span>
+          <span class="spacer"></span>
+          <span class="sub" id="indSystemInfo"></span>
+        </div>
+        <div class="card-bd" id="indBody"></div>
+      </div>
+    </section>
+
+    <!-- ============ 制造 ============ -->
+    <section class="page" id="page-manuf">
+      <div class="card">
+        <div class="card-hd">
+          <h2>蓝图画廊</h2>
+          <span class="sub">搜索蓝图 → 录 ME/TE → 拉材料价 → 出成本</span>
+        </div>
+        <div class="card-bd">
+          <div class="row wrap" style="margin-bottom:14px">
+            <input type="text" id="bpSearch" placeholder="输入产物中文名或类别（护卫舰 / 矮脚鸡级 / 炮塔）" style="flex:1;min-width:240px">
+            <button class="btn pri" id="bpSearchBtn">搜索蓝图</button>
+          </div>
+          <div id="bpStatus"></div>
+        </div>
+      </div>
+
+      <!-- 核算面板：置于搜索框下方，点「核算」后立即可见 -->
+      <div class="card" id="bpCalcCard" style="display:none">
+        <div class="card-hd">
+          <h2 id="bpCalcTitle">制造核算</h2>
+          <span class="spacer"></span>
+          <span class="sub" id="bpCalcMeta"></span>
+        </div>
+        <div class="card-bd" id="bpCalcBody"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd">
+          <h2>搜索结果</h2>
+          <span class="sub" id="bpListCount"></span>
+        </div>
+        <div class="card-bd tight" id="bpList"></div>
+      </div>
+    </section>
+
+    <!-- ============ 挂单 ============ -->
+    <section class="page" id="page-sell">
+      <div class="card">
+        <div class="card-hd">
+          <h2>挂单收益核算</h2>
+          <span class="sub">税率与槽位取自当前角色技能</span>
+        </div>
+        <div class="card-bd" id="sellBody"></div>
+      </div>
+    </section>
+
+    <!-- ============ 提炼 ============ -->
+    <section class="page" id="page-refine">
+      <div class="card">
+        <div class="card-hd">
+          <h2>矿石提炼</h2>
+          <span class="sub">矿石分级、精炼产出与收益对比</span>
+        </div>
+        <div class="card-bd" id="refineBody"></div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section class="page" id="page-set">
+      <div class="card">
+        <div class="card-hd"><h2>设置</h2></div>
+        <div class="card-bd" id="setBody"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="src/ui/calc-core.js"></script>
+<script src="src/ui/app.js"></script>
+</body>
+</html>

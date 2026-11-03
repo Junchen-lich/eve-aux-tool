@@ -10,8 +10,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node src/core/skills.test.js && node src/core/m2.test.js && node src/core/user-store.test.js && node src/data/store.test.js",
-    "test:online": "node src/core/esi-client.test.js && node src/data/fetcher.test.js && node src/core/m2-e2e.test.js"
+    "test": "node src/core/skills.test.js && node src/core/m2.test.js && node src/core/user-store.test.js && node src/data/store.test.js && node src/ui/calc-core.test.js",
+    "test:online": "node src/core/esi-client.test.js && node src/data/fetcher.test.js && node src/core/m2-e2e.test.js && node src/ui/esi-contract.test.js",
+    "build": "node scripts/build_item_categories.js"
   },
   "dependencies": {}
 }
