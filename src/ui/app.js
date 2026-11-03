@@ -270,6 +270,22 @@
                 escapeHtml(e && e.message ? e.message : String(e)) + "</div>", "err");
             }
           }
+        }),
+        el("button", {
+          class: "btn", text: "手动填写技能…",
+          title: "从游戏内查看技能等级后手动填入，数据同样长期保留",
+          onclick: function () {
+            try {
+              openManualSkillsPanel();
+            } catch (e) {
+              console.error("打开手动填写面板失败：", e);
+              var b = $("#charBody");
+              if (b) {
+                b.innerHTML = "<div class='tip'>打开手动填写面板失败：" +
+                  escapeHtml(e && e.message ? e.message : String(e)) + "</div>";
+              }
+            }
+          }
         })
       ]));
       return;
@@ -309,6 +325,36 @@
         "技能等数据已落盘，<b>不随令牌过期而失效</b>；" +
         "点「重新同步」可在重新授权后拉取最新数据。"
       }));
+    }
+
+    /* ★ 手动填写的技能 → 提示不会自动更新 */
+    if (S.char.manualSkills) {
+      body.appendChild(el("div", { class: "tip", style: "margin-bottom:14px", html:
+        "<b>这些技能等级是手动填写的</b>，不会自动更新 —— " +
+        "技能提升后需要回来改。数据同样长期保留在本地。"
+      }));
+    }
+
+    /* ★ 技能一条都没拿到 → 明确告知并给出两条出路 */
+    if (!Object.keys(S.char.skills || {}).length) {
+      body.appendChild(el("div", { class: "tip", style: "margin-bottom:14px", html:
+        "<b>还没有技能数据</b> —— 当前核算按 <b>0 级技能</b> 计算（税率偏高、收益偏低，偏保守）。<br>" +
+        "拿不到技能的原因通常是：用的应用没有被授予 <code>esi-skills.read_skills.v1</code> 权限。" +
+        "<br>两条出路：" +
+        "<br>1) <b>手动填写</b>（立刻可用）—— 在游戏里看技能等级，填进来，数据长期保留。" +
+        "<br>2) <b>自注册应用</b>（一劳永逸）—— 在网易开发者后台注册并勾选「读取角色技能」，" +
+        "把 Client ID 填进「设置」页。"
+      }));
+      var fixRow = el("div", { class: "row wrap", style: "margin-bottom:16px" });
+      fixRow.appendChild(el("button", {
+        class: "btn pri", text: "手动填写技能…",
+        onclick: function () { openManualSkillsPanel(); }
+      }));
+      fixRow.appendChild(el("button", {
+        class: "btn", text: "去设置页",
+        onclick: function () { switchPage("set"); }
+      }));
+      body.appendChild(fixRow);
     }
 
     /* 技能参数面板 */
@@ -392,6 +438,9 @@
       skills: p.skills || {},
       // 标记数据来自本地档案（令牌可能已过期）
       fromArchive: true,
+      // ★ 手动填写的技能 / 技能不可用（scope 未授予）
+      manualSkills: !!p.manualSkills,
+      skillsUnavailable: !!p.skillsUnavailable,
       syncedAt: p.syncedAt || null
     };
     S.skills = p.skills || {};
@@ -410,6 +459,8 @@
           serverKey: serverKey,
           skills: j.skills || {},
           fromArchive: false,
+          manualSkills: false,
+          skillsUnavailable: !!j.skillsUnavailable,
           syncedAt: Date.now()
         };
         S.skills = j.skills || {};
@@ -417,7 +468,12 @@
         updateChip();
         renderChar();
         renderSell();
-        toast("角色数据已同步", "ok");
+        // ★ 同步成功但技能拿不到 → 如实说明，不要报「已同步」误导用户
+        if (j.skillsUnavailable) {
+          toast("角色身份已同步，但技能拿不到（权限不足）", "err");
+        } else {
+          toast("角色数据已同步", "ok");
+        }
       })
       .catch(function (e) {
         // ★ 同步失败（多半是令牌过期）→ 回退到本地档案数据，不让用户看到空页面
@@ -594,6 +650,12 @@
             : "应该是 ali-esi.evepc.163.com 开头、带 ?code=… 的地址";
           msg.innerHTML = "<div class='tip'>已生成，复制或直接点「在浏览器打开」。</div>";
           msg.className = "";
+          // ★ 公共 Client ID 的能力限制要提前告知，别让用户授权完才发现
+          if (j.limitationNotice) {
+            limitNote.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+              escapeHtml(j.limitationNotice) + "</div>";
+            limitNote.style.display = "block";
+          }
         })
         .catch(function (e) {
           genBtn.disabled = false;
@@ -659,10 +721,31 @@
           var lines = [];
           lines.push("✓ 授权成功：" + (j.characterName || ("角色 " + j.characterId)));
           if (j.sync && j.sync.error) lines.push("⚠ " + j.sync.error);
-          else if (j.sync) lines.push("✓ 已同步 " + j.sync.skillCount + " 项技能到本地档案");
+          else if (j.sync && j.skillsUnavailable) {
+            lines.push("⚠ 角色身份已识别，但**技能数据拿不到**（权限不足，非令牌问题）");
+          } else if (j.sync) {
+            lines.push("✓ 已同步 " + j.sync.skillCount + " 项技能到本地档案");
+          }
           if (j.warning) lines.push(j.warning);
           msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
             escapeHtml(lines.join("\n")) + "</div>";
+
+          // ★ 技能拿不到 → 给出明确出路，并直接提供「手动填写」入口
+          if (j.guidance) {
+            var guide = el("div", { class: "tip", style: "margin-top:10px;white-space:pre-wrap" });
+            guide.appendChild(el("div", { html: escapeHtml(j.guidance).replace(/\n/g, "<br>") }));
+            var gRow = el("div", { style: "margin-top:10px;display:flex;gap:8px;flex-wrap:wrap" });
+            gRow.appendChild(el("button", {
+              class: "btn sm pri", text: "手动填写技能…",
+              onclick: function () { openManualSkillsPanel(); }
+            }));
+            gRow.appendChild(el("button", {
+              class: "btn sm", text: "去设置页填 Client ID",
+              onclick: function () { switchPage("set"); }
+            }));
+            guide.appendChild(gRow);
+            msg.appendChild(guide);
+          }
           // 重新拉档案并刷新界面；成功后收起面板，让「角色」页显示新角色
           api("/api/profiles").then(function (r) {
             S.profiles = (r && r.profiles) || [];
@@ -687,6 +770,161 @@
           pasteArea.focus();
         });
     });
+
+    panel.appendChild(bd);
+    host.appendChild(panel);
+  }
+
+  /**
+   * 手动填写技能等级面板。
+   *
+   * ★ 用途：网易官方公共 Client ID 拿不到技能数据（其令牌访问技能接口一律 403），
+   *   这时让用户从游戏内查看技能等级后手动填入。
+   *   填完落到与自动同步同一份角色档案里，同样长期保留在本地。
+   */
+  function openManualSkillsPanel() {
+    var host = $("#manualAuthHost");
+    if (!host) host = $("#charBody");
+    if (!host) return;
+    host.innerHTML = "";
+
+    var panel = el("div", { class: "card", style: "margin-top:16px" });
+    var bd = el("div", { class: "card-bd" });
+
+    var titleRow = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:10px" });
+    titleRow.appendChild(el("div", { style: "font-weight:500", text: "手动填写技能等级" }));
+    titleRow.appendChild(el("span", { class: "spacer" }));
+    var closeBtn = el("button", { class: "btn sm", text: "收起" });
+    closeBtn.addEventListener("click", function () { host.innerHTML = ""; });
+    titleRow.appendChild(closeBtn);
+    bd.appendChild(titleRow);
+
+    bd.appendChild(el("div", { class: "tip", style: "margin-bottom:12px", html:
+      "在游戏里按 <b>ESC → 克隆舱 → 技能</b>（或角色面板的技能页）查看 14 项技能等级，" +
+      "把等级填到这里。<br>" +
+      "填入的数值会<b>长期保存在本地</b>，与自动同步的技能一样参与全部核算；" +
+      "但它<b>不会自动更新</b> —— 技能提升后需要回来改。" +
+      "<br>若你已用自注册应用授权成功，则无需手填（会自动同步）。"
+    }));
+
+    // 服务器与角色
+    var srvRow = el("div", { style: "margin-bottom:12px" });
+    srvRow.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "服务器" }));
+    var srvSel = el("select", { style: "width:100%" });
+    S.servers.forEach(function (sv) {
+      srvSel.appendChild(el("option", {
+        value: sv.key, text: sv.label,
+        selected: sv.key === (S.char ? S.char.serverKey : S.server) ? "selected" : null
+      }));
+    });
+    srvRow.appendChild(srvSel);
+    bd.appendChild(srvRow);
+
+    var idRow = el("div", { style: "margin-bottom:12px" });
+    idRow.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "角色 ID（数字）" }));
+    var idInput = el("input", {
+      type: "text", placeholder: "例如 2112396661",
+      style: "width:100%",
+      value: S.char ? String(S.char.id) : ""
+    });
+    idRow.appendChild(idInput);
+    bd.appendChild(idRow);
+
+    var nameRow = el("div", { style: "margin-bottom:14px" });
+    nameRow.appendChild(el("label", { style: "display:block;font-size:12px;color:var(--fg-2);margin-bottom:4px", text: "角色名（选填）" }));
+    var nameInput = el("input", {
+      type: "text", placeholder: "例如 Junchen-8023",
+      style: "width:100%",
+      value: S.char ? (S.char.name || "") : ""
+    });
+    nameRow.appendChild(nameInput);
+    bd.appendChild(nameRow);
+
+    // 14 项技能
+    bd.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin-bottom:8px", text: "技能等级（0–5）" }));
+    var inputs = {};
+    var grid = el("div", { class: "skill-grid" });
+    SKILL_LIST.forEach(function (d) {
+      var cur = (S.char && S.char.skills && S.char.skills[d.id]) || 0;
+      var item = el("div", { class: "skill-item" });
+      item.appendChild(el("div", { class: "nm", text: d.name }));
+      item.appendChild(el("div", { class: "ef", text: d.effect }));
+      var row = el("div", { class: "lv-row" });
+      row.appendChild(el("span", { class: "lv-badge" + (cur >= 5 ? " max" : ""), text: "Lv" + cur }));
+      var inp = el("input", { type: "number", min: "0", max: "5", step: "1", value: String(cur) });
+      inp.addEventListener("input", function () {
+        var n = Math.max(0, Math.min(5, parseInt(inp.value, 10) || 0));
+        row.querySelector(".lv-badge").textContent = "Lv" + n;
+        row.querySelector(".lv-badge").className = "lv-badge" + (n >= 5 ? " max" : "");
+      });
+      inputs[d.id] = inp;
+      row.appendChild(inp);
+      item.appendChild(row);
+      grid.appendChild(item);
+    });
+    bd.appendChild(grid);
+
+    // ★ 公共 Client ID 的限制提示容器（生成链接后才显示）
+    var limitNote = el("div", {
+      style: "margin-top:12px;display:none"
+    });
+    bd.appendChild(limitNote);
+
+    var msg = el("div", { style: "margin-top:12px;font-size:13px" });
+    bd.appendChild(msg);
+
+    var saveBtn = el("button", { class: "btn pri", text: "保存技能", style: "margin-top:10px" });
+    saveBtn.addEventListener("click", function () {
+      var cid = parseInt(idInput.value, 10);
+      if (!cid) {
+        msg.innerHTML = "<div class='tip'>请填写角色 ID（数字）</div>";
+        return;
+      }
+      var skills = {};
+      SKILL_LIST.forEach(function (d) {
+        var lv = parseInt(inputs[d.id].value, 10) || 0;
+        if (lv > 0) skills[d.id] = lv;
+      });
+      if (!Object.keys(skills).length) {
+        msg.innerHTML = "<div class='tip'>至少要填一项技能</div>";
+        return;
+      }
+      saveBtn.disabled = true;
+      api("/api/skills/manual", {
+        method: "POST",
+        body: {
+          serverKey: srvSel.value,
+          characterId: cid,
+          characterName: nameInput.value.trim(),
+          skills: skills
+        }
+      })
+        .then(function (j) {
+          saveBtn.disabled = false;
+          msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+            escapeHtml("✓ 已保存 " + j.skillCount + " 项技能到本地档案（角色：" +
+              (j.characterName || j.characterId) + "）") + "</div>";
+          // 刷新档案并切到该角色
+          api("/api/profiles").then(function (r) {
+            S.profiles = (r && r.profiles) || [];
+            var hit = S.profiles.filter(function (p) {
+              return p.serverKey === srvSel.value && p.characterId === cid;
+            })[0];
+            if (hit) {
+              restoreFromProfile(hit);
+              S.char.manualSkills = true;
+              renderChar();
+              renderSell();
+            }
+          });
+        })
+        .catch(function (e) {
+          saveBtn.disabled = false;
+          msg.innerHTML = "<div class='tip' style='white-space:pre-wrap'>" +
+            escapeHtml("保存失败：" + e.message) + "</div>";
+        });
+    });
+    bd.appendChild(saveBtn);
 
     panel.appendChild(bd);
     host.appendChild(panel);

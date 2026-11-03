@@ -60,6 +60,39 @@ const APP_VERSION = (() => {
 })();
 
 /**
+ * 代码指纹：源文件的 mtime+size 哈希。
+ *
+ * ★ 用途：解决「改了代码但接口行为还是旧的」这个反复踩的坑 ——
+ *   端口上可能挂着**改动前启动的实例**，健康检查却照样通，
+ *   人会以为代码没生效。版本号不够（同一个版本内也在改），
+ *   所以这里给每个实例算一个指纹，客户端可据此判断实例是否过期。
+ */
+const CODE_FINGERPRINT = (() => {
+  try {
+    const files = [
+      "server.js",
+      path.join("src", "core", "auth.js"),
+      path.join("src", "core", "servers.js"),
+      path.join("src", "core", "profiles.js"),
+      path.join("src", "core", "esi-client.js"),
+      path.join("src", "core", "user-store.js"),
+      path.join("src", "ui", "app.js"),
+      path.join("src", "ui", "calc-core.js")
+    ];
+    const crypto = require("crypto");
+    const h = crypto.createHash("sha256");
+    for (const f of files) {
+      const p = path.join(ROOT, f);
+      try {
+        const st = fs.statSync(p);
+        h.update(f + ":" + st.size + ":" + Math.floor(st.mtimeMs) + ";");
+      } catch (e) { h.update(f + ":missing;"); }
+    }
+    return h.digest("hex").slice(0, 12);
+  } catch (e) { return "unknown"; }
+})();
+
+/**
  * 回调地址：BASE_URL 优先，否则由监听地址推导。
  *
  * ★ 必须跟随**实际监听端口**：端口被占用时 server.js 会自动 +1 顺延，
@@ -544,14 +577,72 @@ async function apiSync(req, res, user, auth, profiles) {
       totalSP: profile.totalSP,
       wallet: profile.wallet,
       assets: profile.assets,
-      industryJobs: profile.industryJobs
+      industryJobs: profile.industryJobs,
+      // ★ 技能是否取不到（scope 未授予）——界面据此给出出路提示
+      skillsUnavailable: !!profile.skillsUnavailable,
+      skillsUnavailableReason: profile.skillsUnavailableReason || null,
+      skillsErrorMessage: profile.skillsErrorMessage || null
     });
   } catch (e) {
     sendJSON(res, { ok: false, error: e.message }, 500);
   }
 }
 
-/** GET /api/profiles —— 角色档案列表（前台中文展示） */
+/**
+ * POST /api/skills/manual
+ *   body: { serverKey, characterId, characterName, skills: { skillId: level } }
+ *
+ * ★ 手动填写技能等级 —— 当官方公共 Client ID 拿不到技能时的兜底路径。
+ *   数据落到与自动同步同一份角色档案里，同样长期保留在本地。
+ */
+async function apiSkillsManual(req, res, user, profiles) {
+  let body;
+  try { body = JSON.parse(await readBody(req)); }
+  catch (e) { return sendJSON(res, { ok: false, error: "请求体不是有效 JSON" }, 400); }
+
+  const serverKey = body.serverKey || "serenity";
+  if (!SERVERS[serverKey]) return sendJSON(res, { ok: false, error: "未知服务器" }, 400);
+  const characterId = Number(body.characterId);
+  if (!characterId) return sendJSON(res, { ok: false, error: "缺少角色 ID" }, 400);
+
+  const raw = body.skills || {};
+  const skills = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const lv = Math.max(0, Math.min(5, parseInt(v, 10) || 0));
+    if (lv > 0) skills[k] = lv;
+  }
+  if (!Object.keys(skills).length) {
+    return sendJSON(res, { ok: false, error: "至少要填一项技能" }, 400);
+  }
+
+  try {
+    const ps = profilesFor(user);
+    const prev = ps.get(serverKey, characterId);
+    const profile = ps.save({
+      serverKey,
+      characterId,
+      characterName: body.characterName || (prev && prev.characterName) || ("角色 " + characterId),
+      skills,
+      skillSnapshot: (prev && prev.skills) || Object.assign({}, skills),
+      // ★ 标记为手动填写 —— 界面要提示「这些数值是手填的，不会自动更新」
+      manualSkills: true,
+      totalSP: (prev && prev.totalSP) || 0,
+      syncedAt: Date.now()
+    });
+    sendJSON(res, {
+      ok: true,
+      characterId: profile.characterId,
+      characterName: profile.characterName,
+      skillCount: Object.keys(profile.skills || {}).length,
+      skills: profile.skills
+    });
+  } catch (e) {
+    sendJSON(res, { ok: false, error: e.message }, 500);
+  }
+}
+
+/**
+ * GET /api/profiles —— 角色档案列表（前台中文展示） */
 function apiProfiles(req, res, profiles) {
   sendJSON(res, { ok: true, profiles: profiles.list() });
 }
@@ -589,6 +680,9 @@ function apiManualAuthLink(req, res, user, q) {
       mode: info.mode,
       serverKey,
       serverLabel: SERVERS[serverKey].label,
+      // ★ 公共 Client ID 的能力限制（实测：该 ID 拿不到技能数据）
+      usingOfficialClientId: !!info.usingOfficialClientId,
+      limitationNotice: info.limitationNotice || null,
       // 提示用户接下来该做什么
       hint: mode === "token"
         ? "在浏览器打开上面的链接并登录授权，授权后浏览器地址栏会出现 #access_token=… 的地址，" +
@@ -623,6 +717,8 @@ async function apiManualAuth(req, res, user) {
 
     // ★ 令牌拿到后立刻同步一次角色数据 —— 数据落到档案后长期保留，
     //   与令牌是否过期无关。
+    //   注意：技能可能因 scope 未授予而取不到（网易公共 Client ID 的已知限制），
+    //   这时**不算失败** —— 角色公开信息仍然可用，要如实告诉用户缺什么。
     let syncNote = null;
     try {
       const profiles = profilesFor(user);
@@ -634,7 +730,10 @@ async function apiManualAuth(req, res, user) {
       syncNote = {
         characterName: profile.characterName,
         characterId: profile.characterId,
-        skillCount: Object.keys(profile.skills || {}).length
+        skillCount: Object.keys(profile.skills || {}).length,
+        skillsUnavailable: !!profile.skillsUnavailable,
+        skillsUnavailableReason: profile.skillsUnavailableReason || null,
+        skillsErrorMessage: profile.skillsErrorMessage || null
       };
     } catch (e) {
       syncNote = { error: "令牌已取得，但同步角色数据失败：" + e.message };
@@ -649,7 +748,24 @@ async function apiManualAuth(req, res, user) {
       hasRefresh: !!out.rec.refreshToken,
       source: out.rec.source,
       warning: out.warning,
-      sync: syncNote
+      sync: syncNote,
+      // ★ 令牌成功但技能没拿到 —— 不算失败，但要明确告知
+      skillsUnavailable: !!(syncNote && syncNote.skillsUnavailable),
+      skillsUnavailableReason: (syncNote && syncNote.skillsUnavailableReason) || null,
+      guidance: (syncNote && syncNote.skillsUnavailable)
+        ? ("授权成功，角色身份已识别，但**技能数据拿不到**。\n" +
+           "原因：网易官方公共 Client ID 在后台没有授予 esi-skills.read_skills.v1，\n" +
+           "其令牌访问技能/属性/钱包等接口一律返回 403。\n" +
+           "\n" +
+           "接下来三选一：\n" +
+           "1) **自己注册应用**（推荐，一劳永逸）\n" +
+           "   在网易开发者后台为该服注册应用，勾选「读取角色技能」，\n" +
+           "   把 Client ID 填进「设置」页，再走标准授权流程。\n" +
+           "2) **手动填写技能等级**\n" +
+           "   在「角色」页点「手动填写技能」，把 14 项技能等级填进去，\n" +
+           "   数据同样长期保留，核算功能完全可用。\n" +
+           "3) 暂时不管 —— 工具会按 0 级技能计算税率（偏保守）。")
+        : null
     });
   } catch (e) {
     sendJSON(res, { ok: false, error: e.message }, 400);
@@ -910,6 +1026,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: "eve-aux-tool",
         version: APP_VERSION,
+        // ★ 代码指纹：用于识别「端口上跑的是改动前的旧实例」
+        fingerprint: CODE_FINGERPRINT,
         uptime: Math.round(process.uptime()),
         users: userSpace.listUsers().length,
         mode: MULTI_USER ? "multi-user" : "single-user"
@@ -967,6 +1085,9 @@ const server = http.createServer(async (req, res) => {
       return apiConfig(req, res, user);
     }
     if (url.startsWith("/api/sync") && req.method === "POST") return await apiSync(req, res, user, auth, profiles);
+    if (url.startsWith("/api/skills/manual") && req.method === "POST") {
+      return await apiSkillsManual(req, res, user, profiles);
+    }
     if (url.startsWith("/api/auth/manual")) {
       if (req.method === "POST") return await apiManualAuth(req, res, user);
       return apiManualAuthLink(req, res, user, q);

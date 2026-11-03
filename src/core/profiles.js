@@ -99,6 +99,9 @@ class ProfileStore {
         // ★ 一并带上技能快照 —— 前端需在令牌过期后仍能用它算参数
         skills: p.skills || {},
         skillCount: Object.keys(p.skills || {}).length,
+        // ★ 手动填写的技能 → 界面提示「不会自动更新」
+        manualSkills: !!p.manualSkills,
+        skillsUnavailable: !!p.skillsUnavailable,
         totalSP: p.totalSP || 0,
         syncedAt: p.syncedAt || null,
         expired: !!(p.tokenExpired)
@@ -164,9 +167,22 @@ class ProfileStore {
     });
 
     const onStatus = p.onStatus || (() => { });
+
+    // ★ 渐进降级：技能接口可能因 scope 未授予而 403，
+    //   但角色公开信息（/characters/{id}）通常仍可读。
+    //   所以不能一失败就整体中断 —— 尽量把能拿的数据都拿到。
     onStatus("拉取技能…");
-    const skillsResp = await client.getSkills(p.characterId);
-    const parsed = skillMap.parseEsiSkills(skillsResp);
+    let skillsResp = null;
+    let skillsError = null;
+    try {
+      skillsResp = await client.getSkills(p.characterId);
+    } catch (e) {
+      skillsError = e;
+    }
+    let parsed = { levels: {}, unmatched: [] };
+    if (skillsResp) {
+      parsed = skillMap.parseEsiSkills(skillsResp);
+    }
 
     onStatus("拉取角色属性…");
     let attributes = null;
@@ -216,9 +232,18 @@ class ProfileStore {
       serverKey: p.serverKey,
       characterId: p.characterId,
       characterName,
-      skills: parsed.levels,
+      // ★ 技能取不到时保留**上一次**的技能值，不要清空 ——
+      //   用户手填或上次同步得到的技能等级比空值有用得多。
+      skills: (parsed.levels && Object.keys(parsed.levels).length)
+        ? parsed.levels
+        : (prev && prev.skills) || {},
       skillSnapshot: prev ? prev.skills : Object.assign({}, parsed.levels),
       unmatchedSkills: parsed.unmatched,
+      // 记录降级原因，供界面提示
+      skillsUnavailable: !!skillsError,
+      skillsUnavailableReason: skillsError
+        ? (skillsError.code === "SCOPE_DENIED" ? "scope_not_granted" : (skillsError.code || "error"))
+        : null,
       totalSP: skillsResp && skillsResp.total_sp ? skillsResp.total_sp : 0,
       attributes: attributes ? {
         intelligence: attributes.intelligence,
@@ -236,6 +261,10 @@ class ProfileStore {
     const saved = this.save(profile);
     const changes = this.detectSkillChanges(saved);
     saved.skillChanges = changes;
+    // ★ 同步完成但技能拿不到时，把原因带给界面（不算失败，但要提示）
+    saved.skillsUnavailable = !!skillsError;
+    saved.skillsUnavailableReason = profile.skillsUnavailableReason;
+    saved.skillsErrorMessage = skillsError ? skillsError.message : null;
     this._save();
     return saved;
   }

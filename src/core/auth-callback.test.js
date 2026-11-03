@@ -365,7 +365,87 @@ async function testNetEase500Translation() {
     "★ 不把网易的原始英文当错误主体抛给用户");
 }
 
-/* ---------------- 13. 令牌过期后数据保留 ---------------- */section("【令牌过期后数据保留】");
+/* ---------------- 14. 公共 Client ID 的 scope 限制 ---------------- */
+section("【公共 Client ID 的 scope 限制】");
+
+/**
+ * 实测（2026-11-04，用真实令牌验证）：
+ *   网易官方公共 Client ID 签发的令牌，访问**所有需要 scope 的端点**一律 403，
+ *   只有公开端点（/characters/{id}）正常。
+ *   令牌 payload 里的 scp 字段是**请求值**，不是**授予值**。
+ *   → 用公共 ID 授权拿不到技能数据，必须有兜底方案。
+ */
+async function testOfficialClientLimitation() {
+  const { AuthManager: AM, isOfficialClientId: isOff } = require("./auth.js");
+
+  ok(isOff(OFFICIAL_CN_CLIENT_ID), "★ 能识别网易官方公共 Client ID");
+  ok(!isOff("my-own-client-id"), "自注册 ID 不误判");
+
+  // 生成授权链接时应带回限制说明
+  const a = new AM({ clientId: OFFICIAL_CN_CLIENT_ID });
+  const au = a.buildManualAuthorize("shuguang", ["esi-skills.read_skills.v1"], {
+    clientId: OFFICIAL_CN_CLIENT_ID,
+    redirectUri: OFFICIAL_CN_REDIRECT_URI,
+    usePkce: true
+  });
+  ok(au.usingOfficialClientId === true, "★ 授权链接标记出「用的是公共 Client ID」");
+  ok(!!au.limitationNotice, "★ 带回限制说明");
+  ok(au.limitationNotice.indexOf("拿不到角色技能") >= 0, "说明里点明拿不到技能");
+  ok(au.limitationNotice.indexOf("手动填写") >= 0, "说明里给出手动填写的出路");
+  ok(au.url.indexOf("esi-skills.read_skills.v1") >= 0, "仍然申请 skills scope（自建应用时它是关键）");
+
+  // 自注册 ID 不带限制说明
+  const b = new AM({ clientId: "my-own-client-id-1234567890" });
+  const au2 = b.buildManualAuthorize("shuguang", ["esi-skills.read_skills.v1"], {
+    clientId: "my-own-client-id-1234567890",
+    redirectUri: "http://localhost:8657/sso/callback",
+    usePkce: true
+  });
+  ok(au2.usingOfficialClientId === false, "自注册 ID 不标记为公共 ID");
+  ok(!au2.limitationNotice, "自注册 ID 不带限制说明");
+}
+
+/* ---------------- 15. ESI 403 的语义与降级 ---------------- */
+section("【ESI 403 的语义与降级】");
+
+async function testEsi403Semantics() {
+  const { EsiClient } = require("./esi-client.js");
+
+  // 用一个必然 403 的端点验证错误被标记为 SCOPE_DENIED
+  const client = new EsiClient({ server: "shuguang", token: "aaa.bbb.ccc" });
+  let code = null, msg = "";
+  try {
+    await client.request("/characters/12345/skills", null, { auth: true });
+  } catch (e) {
+    code = e.code;
+    msg = e.message;
+  }
+  ok(code === "SCOPE_DENIED", "★ 403 被标记为 SCOPE_DENIED（区别于 401 令牌失效）", code);
+  ok(msg.indexOf("权限不足") >= 0, "错误信息点明是权限问题");
+  ok(msg.indexOf("bc90aa49") >= 0, "点明公共 Client ID 的已知限制");
+  ok(msg.indexOf("手动填写") >= 0, "给出手动填写的出路");
+  ok(msg.indexOf("注册应用") >= 0, "给出自注册应用的出路");
+
+  // 技能不可用时，档案应保留上一次的技能值
+  const fs2 = require("fs"), os2 = require("os"), path2 = require("path");
+  const tmp = fs2.mkdtempSync(path2.join(os2.tmpdir(), "eve-deg-"));
+  const { UserSpace } = require("./user-store.js");
+  const { ProfileStore } = require("./profiles.js");
+  const us = new UserSpace({ salt: "d", singleUser: true, baseDir: tmp });
+  const store = us.store("local");
+  const ps = new ProfileStore({
+    file: store.profilesFile,
+    persist: (p) => store.saveProfiles(p)
+  });
+  ps.profiles = store.profiles();
+  ps.save({ serverKey: "shuguang", characterId: 111, characterName: "A", skills: { ind: 5, acct: 3 } });
+  const got = ps.get("shuguang", 111);
+  ok(got && got.skills && got.skills.ind === 5, "档案保留已有技能值");
+  try { fs2.rmSync(tmp, { recursive: true, force: true }); } catch (e) { }
+}
+
+/* ---------------- 16. 令牌过期后数据保留 ---------------- */
+section("【令牌过期后数据保留】");
 {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eve-expire-"));
   const { UserSpace } = require("./user-store.js");
@@ -430,6 +510,20 @@ testManualChannel()
   })
   .catch(function (e) {
     console.error("  FAIL 网易 500 翻译验证抛出异常 → " + (e && e.message ? e.message : e));
+    fail++;
+  })
+  .then(function () {
+    return testOfficialClientLimitation();
+  })
+  .catch(function (e) {
+    console.error("  FAIL 公共 Client ID 限制验证抛出异常 → " + (e && e.message ? e.message : e));
+    fail++;
+  })
+  .then(function () {
+    return testEsi403Semantics();
+  })
+  .catch(function (e) {
+    console.error("  FAIL ESI 403 语义验证抛出异常 → " + (e && e.message ? e.message : e));
     fail++;
   })
   .then(function () {

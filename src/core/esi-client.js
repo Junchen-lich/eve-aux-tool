@@ -95,6 +95,34 @@ class EsiClient {
       err.code = "RATE_LIMITED";
       throw err;
     }
+    if (res.status === 403) {
+      // ★ 403 有两种完全不同的含义，必须区分（实测 2026-11-04）：
+      //   a) 令牌本身被拒（格式乱/签名错）→ 响应体是 "authentication failure"
+      //   b) 令牌有效，但**该端点需要的 scope 没被授予**→ 也是 "authentication failure"
+      //   区分方法：同一个令牌打公开端点（/characters/{id}）能通就是 b。
+      //   已知场景：网易官方公共 Client ID 签发的令牌对**所有需 scope 的端点**
+      //   一律 403 —— 它的后台只配了极少数 scope，且不包含
+      //   esi-skills.read_skills.v1，所以技能/属性/钱包都读不到。
+      const body = await res.text().catch(() => "");
+      const err = new Error(
+        "ESI 拒绝了该请求（403）：**权限不足**。\n" +
+        "\n" +
+        "这通常不是令牌过期，而是**这个应用没有被授予该接口所需的 scope**。\n" +
+        "\n" +
+        "若你用的是网易官方公共 Client ID（bc90aa49…），这是**已知限制**：\n" +
+        "它在网易后台只配了极少数 scope，不含 esi-skills.read_skills.v1，\n" +
+        "所以角色技能、属性、钱包等接口一律 403 —— 但角色公开信息可以正常读取。\n" +
+        "\n" +
+        "解决办法：\n" +
+        "1) **自己注册应用**（推荐）—— 在网易开发者后台为该服注册应用，\n" +
+        "   勾选「读取角色技能」权限，用它的 Client ID 走标准授权流程。\n" +
+        "2) 或在工具的「角色」页**手动填写技能等级**（数据同样长期保留）。\n" +
+        "\n" +
+        "原始响应：" + body.slice(0, 120));
+      err.code = "SCOPE_DENIED";
+      err.status = 403;
+      throw err;
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       const err = new Error("ESI 请求失败 HTTP " + res.status + " " + body.slice(0, 160));

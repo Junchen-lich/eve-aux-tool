@@ -167,6 +167,115 @@ async function pickPort(start) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 代码指纹
+ *
+ * ★ 解决的问题（反复踩坑）：端口上可能挂着**改动前启动的实例**，
+ *   /healthz 照样返回 200，于是接口行为还是旧的 ——
+ *   人会以为「代码改了没生效」，白排查很久。
+ *   指纹与 server.js 里的 CODE_FINGERPRINT 用同一套算法，
+ *   不一致就说明该实例是旧代码，应当重启。
+ * ------------------------------------------------------------------ */
+function localFingerprint() {
+  try {
+    const crypto = require("crypto");
+    const files = [
+      "server.js",
+      path.join("src", "core", "auth.js"),
+      path.join("src", "core", "servers.js"),
+      path.join("src", "core", "profiles.js"),
+      path.join("src", "core", "esi-client.js"),
+      path.join("src", "core", "user-store.js"),
+      path.join("src", "ui", "app.js"),
+      path.join("src", "ui", "calc-core.js")
+    ];
+    const h = crypto.createHash("sha256");
+    for (const f of files) {
+      const p = path.join(ROOT, f);
+      try {
+        const st = fs.statSync(p);
+        h.update(f + ":" + st.size + ":" + Math.floor(st.mtimeMs) + ";");
+      } catch (e) { h.update(f + ":missing;"); }
+    }
+    return h.digest("hex").slice(0, 12);
+  } catch (e) { return "unknown"; }
+}
+
+/**
+ * 找出占用指定端口的进程 PID。
+ *
+ * ★ 用 `netstat -ano` 而不是 PowerShell：
+ *   PowerShell 命令在某些执行环境里会被安全策略拦截，
+ *   而 netstat 是 Windows 自带的、可直接 exec 的普通程序。
+ */
+function pidsOnPort(port) {
+  const out = [];
+  try {
+    let raw = "";
+    if (process.platform === "win32") {
+      raw = execSyncSafe("netstat -ano -p tcp");
+      // 形如：  TCP    0.0.0.0:8657    0.0.0.0:0    LISTENING    12345
+      raw.split(/\r?\n/).forEach((line) => {
+        if (!/LISTENING/i.test(line)) return;
+        const cols = line.trim().split(/\s+/);
+        if (cols.length < 5) return;
+        const local = cols[1] || "";
+        const p = Number(cols[cols.length - 1]);
+        if (!/:[\d.]+$/.test(local)) return;
+        const localPort = Number(String(local).split(":").pop());
+        if (localPort !== port) return;
+        if (Number.isInteger(p) && p > 0) out.push(p);
+      });
+    } else {
+      raw = execSyncSafe("lsof -ti tcp:" + port + " -sTCP:LISTEN 2>/dev/null || true");
+      raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).forEach((s) => {
+        const n = Number(s);
+        if (Number.isInteger(n) && n > 0) out.push(n);
+      });
+    }
+  } catch (e) { /* 探测失败就放弃清理 */ }
+  return [...new Set(out)];
+}
+
+/** 执行命令并返回 stdout（失败返回空串） */
+function execSyncSafe(cmd) {
+  try {
+    return require("child_process").execSync(cmd, {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 8000
+    });
+  } catch (e) { return ""; }
+}
+
+/**
+ * 清理端口上的**旧代码实例**。
+ * 判定依据：/healthz 的 fingerprint 与本地不一致 → 该实例跑的是旧代码。
+ * 只在明确要求时执行（--restart 或 --fresh）。
+ */
+async function killStaleInstances(ports, localFp) {
+  const killed = [];
+  for (const p of ports) {
+    const h = await healthOf(p);
+    if (!h) continue;
+    if (!h.fingerprint || h.fingerprint === localFp) continue;   // 不是本项目或已是最新
+    const pids = pidsOnPort(p);
+    for (const pid of pids) {
+      if (pid === process.pid) continue;
+      try {
+        process.kill(pid, "SIGTERM");
+        killed.push({ port: p, pid });
+      } catch (e) { /* 可能已退出 */ }
+    }
+  }
+  if (killed.length) {
+    // 给进程一点时间退出
+    await new Promise((r) => setTimeout(r, 700));
+    for (const k of killed) {
+      try { process.kill(k.pid, "SIGKILL"); } catch (e) { }
+    }
+  }
+  return killed;
+}
+
+/* ------------------------------------------------------------------ *
  * 健康检查（Node 原生 http 直连，不受 HTTP_PROXY 影响）
  * ------------------------------------------------------------------ */
 function healthOf(port) {
@@ -476,6 +585,18 @@ async function startService(background) {
 
   const startPort = Number(argValue("--port")) || Number(process.env.PORT) || DEFAULT_PORT;
   const explicitPort = !!argValue("--port");
+
+  // ★ 先处理「端口上挂着旧代码实例」的情况 ——
+  //   否则会连到旧实例上，让人以为代码改了没生效。
+  const localFp = localFingerprint();
+  const scanPorts = [];
+  for (let p = startPort; p < startPort + PORT_SCAN; p++) scanPorts.push(p);
+  const stale = await killStaleInstances(scanPorts, localFp);
+  if (stale.length) {
+    line(paint("yellow", "  ⚠ 发现 " + stale.length +
+      " 个运行旧代码的实例，已停止：" +
+      stale.map((k) => "端口" + k.port + "(PID " + k.pid + ")").join("、")));
+  }
 
   // 已在运行？直接开浏览器
   // 注：显式指定 --port 时允许再起一个实例（多开不同端口）

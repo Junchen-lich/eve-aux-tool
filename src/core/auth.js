@@ -99,6 +99,33 @@ function deriveKey(secret) {
 const OFFICIAL_CN_CLIENT_ID = "bc90aa496a404724a93f41b4f4e97761";
 const OFFICIAL_CN_REDIRECT_URI = "https://ali-esi.evepc.163.com/ui/oauth2-redirect.html";
 
+/**
+ * ★ 网易官方公共 Client ID 的**实测限制**（2026-11-04，用户实测 + 本地复现）：
+ *
+ *   令牌 payload 里的 `scp` 字段是**请求的 scope**，不是**实际授予的**。
+ *   网易后台给这个公共 ID 只配了极少数 scope，
+ *   其签发的令牌访问**所有需要 scope 的端点**一律返回
+ *   403 {"error":"authentication failure"}：
+ *     /characters/{id}/skills    → 403
+ *     /characters/{id}/attributes → 403
+ *     /characters/{id}/wallet     → 403
+ *   而**公开端点**（无需 scope）正常：
+ *     /characters/{id}            → 200（角色名、生日、性别、种族、军团）
+ *     /corporations/{id}         → 200
+ *
+ *   结论：用这个公共 ID 授权**拿不到技能数据**。
+ *   本工具仍支持用它授权（能拿到角色身份与公开信息），
+ *   但技能必须靠「自注册应用」或「手动填写」。
+ */
+const OFFICIAL_CN_READABLE_SCOPES = [
+  "esi-skills.read_skills.v1"          // 技能（自注册应用才真正生效）
+];
+
+const OFFICIAL_CN_PUBLIC_ONLY_SCOPES = [
+  "esi-characters.read_corporation_roles.v1",
+  "esi-ui.open_window.v1"
+];
+
 /** 判断是否为网易官方公共 Client ID */
 function isOfficialClientId(clientId) {
   return String(clientId || "").trim().toLowerCase() === OFFICIAL_CN_CLIENT_ID;
@@ -419,6 +446,12 @@ class AuthManager {
     if (!clientId) throw new Error("未配置 Client ID");
     const redirectUri = opts.redirectUri || OFFICIAL_CN_REDIRECT_URI;
 
+    // ★ 公共 Client ID 的 scope 能力实测受限（见 OFFICIAL_CN_READABLE_SCOPES 注释）：
+    //   它对所有需 scope 的端点都 403，但公开端点正常。
+    //   所以这里仍然申请 skills scope（自建应用时它是唯一能拿技能的关键），
+    //   同时把「该 ID 拿不到技能」的事实带回给界面，避免用户误以为授权失败。
+    const usingOfficial = isOfficialClientId(clientId);
+
     const max = cfg.maxScopes || 0;
     if (max && scopes.length > max) {
       throw new Error(
@@ -454,6 +487,7 @@ class AuthManager {
       createdAt: Date.now(),
       clientId,
       redirectUri,
+      usingOfficialClientId: usingOfficial,
       manual: true
     });
 
@@ -461,7 +495,16 @@ class AuthManager {
       url: cfg.ssoAuthorize + "?" + new URLSearchParams(params).toString(),
       state,
       mode: params.response_type === "code" ? "code" : "token",
-      serverKey
+      serverKey,
+      // ★ 公共 Client ID 的能力限制要如实告知界面
+      usingOfficialClientId: usingOfficial,
+      limitationNotice: usingOfficial
+        ? ("注意：你用的是网易官方公共 Client ID。它的后台只配了极少数 scope，\n" +
+           "**拿不到角色技能**（技能/属性/钱包等接口都会返回 403）。\n" +
+           "授权后能读到角色名、生日、性别、种族、军团等公开信息。\n" +
+           "要拿技能请在「设置」页填入自己注册的 Client ID；\n" +
+           "或直接在「角色」页手动填写技能等级。")
+        : null
     };
   }
 
