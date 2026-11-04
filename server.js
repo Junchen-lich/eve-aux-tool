@@ -328,6 +328,39 @@ function readBody(req, limit) {
   });
 }
 
+/**
+ * 返回首页 HTML。
+ * ★ 自动给 <script src> 与 <link rel=stylesheet> 加上文件 mtime 版本号：
+ *   前端文件一改，URL 就变，浏览器必定重新拉取 —— 彻底杜绝
+ *   「改了代码但页面还是旧版」。这个坑本地开发工具几乎人人都踩过。
+ */
+function serveIndex(res) {
+  const file = path.join(ROOT, "index.html");
+  /** 取文件的 mtime 作为版本戳 */
+  function stampOf(rel) {
+    try { return String(Math.floor(fs.statSync(path.join(ROOT, rel)).mtimeMs)); }
+    catch (e) { return "0"; }
+  }
+  fs.readFile(file, "utf8", (err, html) => {
+    if (err) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      return res.end("未找到");
+    }
+    const stamped = html.replace(/<script src="(src\/ui\/[^"]+)"><\/script>/g,
+      (m, src) => {
+        return "<script src=\"" + src + "?v=" + stampOf(src) + "\"></script>";
+      }).replace(/<link rel="stylesheet" href="(src\/ui\/[^"]+)">/g,
+        (m, href) => {
+          return "<link rel=\"stylesheet\" href=\"" + href + "?v=" + stampOf(href) + "\">";
+        });
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store, must-revalidate"
+    });
+    res.end(stamped);
+  });
+}
+
 function serveFile(res, file, contentType) {
   fs.readFile(file, (err, data) => {
     if (err) {
@@ -1267,7 +1300,7 @@ const server = http.createServer(async (req, res) => {
     //   否则 `/?openpanel=1` 这类带参数的首页链接会 404。
     const pathOnly = url.split("?")[0];
     if (pathOnly === "/" || pathOnly === "/index.html") {
-      return serveFile(res, path.join(ROOT, "index.html"), "text/html; charset=utf-8");
+      return serveIndex(res);
     }
     if (url.startsWith("/data/")) {
       const name = path.basename(url.split("?")[0]);

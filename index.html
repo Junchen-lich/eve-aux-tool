@@ -167,6 +167,8 @@
 <div class="toast-wrap" id="toasts"></div>
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 
+<!-- ★ 服务端会自动给这两个脚本加 mtime 版本号（src/ui/xxx.js?v=…），
+     前端一改 URL 就变，浏览器必定重新拉取，避免「改了代码但页面还是旧版」 -->
 <script src="src/ui/calc-core.js"></script>
 <script src="src/ui/app.js"></script>
 </body>

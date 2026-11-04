@@ -164,7 +164,18 @@ body {
 .chip.off .dot { background: var(--fg-3); }
 
 /* 主体 */
-.main { flex: 1; padding: 20px; max-width: 1500px; width: 100%; margin: 0 auto; }
+/* ★ 宽度必须不超过视口：
+     .main 是 .app（flex 容器）的子项，若它的 max-width（1500px）大于视口宽度，
+     靠右对齐的字段（如 .kv .v）会被推到视口外看不见。
+     min(1500px, 100%) 保证容器不超视口；min-width:0 让 flex 项能正常收缩。 */
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: 20px;
+  max-width: min(1500px, 100%);
+  width: 100%;
+  margin: 0 auto;
+}
 .page { display: none; }
 .page.on { display: block; animation: fade .18s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
