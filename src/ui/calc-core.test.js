@@ -44,12 +44,59 @@ section("【税率参数来源一致】");
     brokerFee: tax.brokerFee.base,
     brokerFeePerLevel: Math.abs(tax.brokerFee.perLevel),
     brokerFeeMin: tax.brokerFee.floor,
+    factionStandingPerPoint: Math.abs(tax.brokerFee.factionStandingPerPoint),
+    corpStandingPerPoint: Math.abs(tax.brokerFee.corpStandingPerPoint),
     piImportExportBase: tax.planetaryTax.base,
-    piTaxPerLevel: Math.abs(tax.planetaryTax.perLevel)
+    piTaxPerLevel: Math.abs(tax.planetaryTax.perLevel),
+    servers: tax.servers
   });
   ok(B.TAX.salesTax === N.TAX_BASE.salesTax, "销售税基础值一致", B.TAX.salesTax);
   ok(B.TAX.brokerFee === N.TAX_BASE.brokerFee, "经纪费基础值一致", B.TAX.brokerFee);
   ok(B.TAX.brokerFeeMin === N.TAX_BASE.brokerFeeMin, "经纪费下限一致", B.TAX.brokerFeeMin);
+  ok(B.TAX.factionStandingPerPoint === N.TAX_BASE.factionStandingPerPoint,
+    "★ 势力声望系数一致", B.TAX.factionStandingPerPoint);
+  ok(B.TAX.corpStandingPerPoint === N.TAX_BASE.corpStandingPerPoint,
+    "★ 军团声望系数一致", B.TAX.corpStandingPerPoint);
+}
+
+/* ---------- 各服税率一致性 ---------- */
+section("【各服税率一致】");
+{
+  Object.keys(N.TAX_BY_SERVER).forEach((k) => {
+    const nb = N.taxBaseFor(k);
+    const bb = B.taxBaseFor(k);
+    ok(Math.abs(bb.salesTax - nb.salesTax) < 1e-12,
+      k + " 销售税基准一致", bb.salesTax + " vs " + nb.salesTax);
+    ok(Math.abs(bb.brokerFee - nb.brokerFee) < 1e-12,
+      k + " 中介费基准一致", bb.brokerFee + " vs " + nb.brokerFee);
+  });
+  // 按服取值的逐级比对
+  Object.keys(N.TAX_BY_SERVER).forEach((k) => {
+    for (let l = 0; l <= 5; l++) {
+      const sk = { acct: l, broker_rel: l };
+      const st = { factionStanding: l, corpStanding: l };
+      ok(Math.abs(B.salesTaxRate(sk, k) - N.salesTaxRate(sk, k)) < 1e-12,
+        k + " 销售税 Lv" + l + " 一致",
+        B.salesTaxRate(sk, k).toFixed(6) + " vs " + N.salesTaxRate(sk, k).toFixed(6));
+      ok(Math.abs(B.brokerFeeRate(sk, st, k) - N.brokerFeeRate(sk, st, k)) < 1e-12,
+        k + " 中介费 Lv" + l + "（含声望）一致",
+        B.brokerFeeRate(sk, st, k).toFixed(6) + " vs " + N.brokerFeeRate(sk, st, k).toFixed(6));
+    }
+  });
+  // 官方锚点
+  ok(Math.abs(B.salesTaxRate({ acct: 5 }, "tranquility") - 0.03375) < 1e-9,
+    "★ 欧服锚点：5 级会计学 ≈ 3.37%",
+    (B.salesTaxRate({ acct: 5 }, "tranquility") * 100).toFixed(3) + "%");
+  ok(Math.abs(B.salesTaxRate({ acct: 5 }, "serenity") - 0.036) < 1e-9,
+    "★ 国服锚点：5 级会计学 ≈ 3.6%",
+    (B.salesTaxRate({ acct: 5 }, "serenity") * 100).toFixed(3) + "%");
+  // 覆盖基础值（用户校准场景）
+  ok(Math.abs(B.salesTaxRateWithBase({ acct: 5 }, 0.10) - 0.045) < 1e-9,
+    "覆盖销售税基础 10% → 5 级会计学 4.5%",
+    (B.salesTaxRateWithBase({ acct: 5 }, 0.10) * 100).toFixed(3) + "%");
+  ok(Math.abs(B.brokerFeeRateWithBase({ broker_rel: 5 }, null, 0.04) - 0.025) < 1e-9,
+    "覆盖中介费基础 4% → 5 级经纪人关系学 2.5%",
+    (B.brokerFeeRateWithBase({ broker_rel: 5 }, null, 0.04) * 100).toFixed(3) + "%");
 }
 
 /* ---------- 税率函数逐级比对 ---------- */

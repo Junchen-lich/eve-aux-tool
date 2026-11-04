@@ -36,6 +36,8 @@ const path = require("path");
 const { AuthManager, isOfficialClientId, OFFICIAL_CN_CLIENT_ID, OFFICIAL_CN_REDIRECT_URI } = require("./src/core/auth.js");
 const { ProfileStore } = require("./src/core/profiles.js");
 const { EsiClient } = require("./src/core/esi-client.js");
+const STATIONS_MODULE = require("./src/core/stations.js");
+const { TAX_BASE, TAX_BY_SERVER } = require("./src/core/skills.js");
 const fetcher = require("./src/data/fetcher.js");
 const { SERVERS, SERVER_ORDER } = require("./src/core/servers.js");
 const {
@@ -543,8 +545,134 @@ function apiConfig(req, res, user) {
     redirectUri: defaultRedirectUri(currentPort),
     baseUrl: BASE_URL || null,
     multiUser: MULTI_USER,
-    servers
+    servers,
+    // ★ 税率参数（含各服基准值）—— 前端据此算销售税与中介费
+    tax: taxConfigPayload(),
+    // 势力清单 —— 前端下拉选择「势力声望」用
+    factions: STATIONS_MODULE.FACTIONS
   });
+}
+
+/**
+ * 税率配置下发（给前端 calc-core 用）。
+ * ★ 三服税率不同，必须带 servers 段；声望系数也一并下发
+ *   （此前 tax_config.json 里配了但代码从不读取，导致中介费系统性偏高）。
+ */
+function taxConfigPayload() {
+  const cfg = {
+    salesTax: TAX_BASE.salesTax,
+    brokerFee: TAX_BASE.brokerFee,
+    brokerFeePerLevel: TAX_BASE.brokerFeePerLevel,
+    brokerFeeMin: TAX_BASE.brokerFeeMin,
+    factionStandingPerPoint: TAX_BASE.factionStandingPerPoint,
+    corpStandingPerPoint: TAX_BASE.corpStandingPerPoint,
+    piImportExportBase: TAX_BASE.piImportExportBase,
+    piTaxPerLevel: TAX_BASE.piTaxPerLevel,
+    servers: TAX_BY_SERVER
+  };
+  return cfg;
+}
+
+/**
+ * POST /api/client-error —— 接收前端渲染错误（诊断用）
+ * ★ 前端的 console.error 在无头浏览器里看不到，页面上只表现为「内容没出来」，
+ *   有了这个端点就能在服务端日志里看到真实异常。
+ */
+async function apiClientError(req, res) {
+  let body = {};
+  try { body = JSON.parse(await readBody(req)); } catch (e) { /* 忽略 */ }
+  try {
+    console.error("[前端错误] " + (body.page || "?") + ": " + (body.message || "?"));
+    if (body.stack) console.error(body.stack);
+  } catch (e) { /* 忽略 */ }
+  sendJSON(res, { ok: true });
+}
+
+/**
+ * GET /api/stations?q=关键词 —— 搜索挂单空间站
+ * ★ 声望修正与「挂单所在空间站的站主」绑定，所以必须先知道在哪个站挂单。
+ */
+function apiStations(req, res, url, q) {
+  const keyword = q.q || "";
+  const limit = Math.min(50, Number(q.limit) || 20);
+  const hits = STATIONS_MODULE.searchStations(keyword, limit);
+  const out = hits.map(s => {
+    const owner = STATIONS_MODULE.resolveStationOwner(s);
+    return {
+      id: s.id,
+      name: s.name,
+      system: s.system,
+      systemName: s.systemName,
+      region: s.region,
+      regionName: s.regionName,
+      // 站主与所属势力（用于确定该填哪两项声望）
+      corpName: owner.corpName,
+      factionId: owner.factionId,
+      factionZh: owner.factionZh,
+      // false = 未识别（多为玩家自建站，此时业主自设费率，不需要声望）
+      ownerKnown: owner.known
+    };
+  });
+  // ★ 若按站名精确搜到（本地表未收录的新版站），补一条手填解析结果
+  //   例：「索巴色基 5 - 星捷运 自由贸易中心」在 ESI 与本地 SDE 表中都是 404
+  const byName = STATIONS_MODULE.resolveByName(keyword);
+  if (keyword && byName.known && !out.some(s => s.name === keyword)) {
+    out.unshift({
+      id: null,
+      name: keyword,
+      system: null,
+      systemName: null,
+      region: null,
+      regionName: null,
+      corpName: byName.corpName,
+      factionId: byName.factionId,
+      factionZh: byName.factionZh,
+      ownerKnown: true,
+      // 标记为「按站名手填」—— 界面提示该站不在本地表内
+      manualName: true
+    });
+  }
+  sendJSON(res, { ok: true, count: out.length, stations: out });
+}
+
+/**
+ * GET /api/standing?server=&characterId= —— 读取角色声望
+ * ★ 需 scope：esi-characters.read_standings.v1
+ */
+async function apiStanding(req, res, user, auth, q) {
+  const serverKey = q.server || "serenity";
+  const characterId = Number(q.characterId);
+  if (!characterId) return sendJSON(res, { ok: false, error: "缺少角色 ID" }, 400);
+
+  const key = ProfileStore.key(serverKey, characterId);
+  const tokenRec = auth.tokens[key];
+  if (!tokenRec || !tokenRec.accessToken) {
+    return sendJSON(res, { ok: false, error: "该角色尚未授权，无法读取声望" }, 400);
+  }
+  try {
+    const client = new EsiClient({ server: serverKey, token: tokenRec.accessToken });
+    const list = await client.getStandings(characterId);
+    // 只保留玩家有实际意义的势力项（500xxx 主力势力）
+    const main = (STATIONS_MODULE.FACTIONS || []).map(f => {
+      const hit = list.find(s => s.from_id === f.factionId);
+      return {
+        factionId: f.factionId,
+        nameZh: f.nameZh,
+        nameEn: f.nameEn,
+        standing: hit ? hit.standing : 0
+      };
+    });
+    sendJSON(res, {
+      ok: true,
+      characterId,
+      serverKey,
+      factions: main,
+      // 原始列表（含 corp 项），供界面展示与手填时参考
+      raw: list
+    });
+  } catch (e) {
+    sendJSON(res, { ok: false, error: "读取声望失败：" + e.message }, 200);
+  }
 }
 
 /** POST /api/sync —— 同步角色数据 */
@@ -1111,6 +1239,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.startsWith("/api/skills")) {
       return apiSkills(res);
+    }
+    if (url.startsWith("/api/stations")) {
+      return apiStations(req, res, url, q);
+    }
+    if (url.startsWith("/api/client-error")) {
+      return apiClientError(req, res);
+    }
+    if (url.startsWith("/api/standing")) {
+      return await apiStanding(req, res, user, auth, q);
     }
     if (url.startsWith("/api/sync") && req.method === "POST") return await apiSync(req, res, user, auth, profiles);
     if (url.startsWith("/api/skills/manual") && req.method === "POST") {

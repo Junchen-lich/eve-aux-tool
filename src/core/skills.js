@@ -67,15 +67,19 @@ const ACTIVITY = {
  * 若该表存在则以其为准，便于随游戏版本更新而无需改代码。
  * ------------------------------------------------------------------ */
 const DEFAULT_TAX = {
-  salesTax: 0.075,   // 销售税（交易税）基础 7.5%
-  brokerFee: 0.03,   // 经纪费基础 3%（NPC 站）
+  salesTax: 0.075,   // 销售税（交易税）基础 7.5%（欧服口径）
+  brokerFee: 0.03,   // 经纪费基础 3%（NPC 站，欧服口径）
   brokerFeePerLevel: 0.003,
   // 销售税用乘法：税率 = 基础 × (1 − 0.11×会计学等级)
   salesTaxPerLevel: 0.11,
   brokerFeeMin: 0.01,
+  // ★ 声望修正项（官方公式的两项，此前只写在配置表里，代码从未读取）
+  //   势力声望每点 −0.03%，军团声望每点 −0.02%
+  factionStandingPerPoint: 0.0003,
+  corpStandingPerPoint: 0.0002,
   // 行星工业 NPC 进口/出口税基础 10%（安都 10%，需 POCO）
   piImportExportBase: 0.10,
-  piTaxPerLevel: 0.10   // 报关代码专家每级 -10%
+  piTaxPerLevel: 0.10   // 海关操作专业理论每级 -10%
 };
 
 const TAX_BASE = loadTaxConfig();
@@ -97,6 +101,13 @@ function loadTaxConfig() {
       if (typeof raw.brokerFee.base === "number") cfg.brokerFee = raw.brokerFee.base;
       if (typeof raw.brokerFee.perLevel === "number") cfg.brokerFeePerLevel = Math.abs(raw.brokerFee.perLevel);
       if (typeof raw.brokerFee.floor === "number") cfg.brokerFeeMin = raw.brokerFee.floor;
+      // ★ 读取声望系数（此前缺失，导致算出的中介费系统性偏高）
+      if (typeof raw.brokerFee.factionStandingPerPoint === "number") {
+        cfg.factionStandingPerPoint = Math.abs(raw.brokerFee.factionStandingPerPoint);
+      }
+      if (typeof raw.brokerFee.corpStandingPerPoint === "number") {
+        cfg.corpStandingPerPoint = Math.abs(raw.brokerFee.corpStandingPerPoint);
+      }
     }
     if (raw.planetaryTax) {
       if (typeof raw.planetaryTax.base === "number") cfg.piImportExportBase = raw.planetaryTax.base;
@@ -106,6 +117,56 @@ function loadTaxConfig() {
     // 配置表损坏时用默认值，保证计算不中断
   }
   return cfg;
+}
+
+/* ------------------------------------------------------------------ *
+ * 按服务器取税率基准
+ *
+ * ★ 三服税率不同（欧服 7.5%/3%，国服 8%/2.5%），必须按 serverKey 取值，
+ *   用全局单值会让每一服的利润数字都算错。
+ * ------------------------------------------------------------------ */
+
+/** 各服税率基准（从 tax_config.json 的 servers 段读取） */
+const TAX_BY_SERVER = loadServerTax();
+
+function loadServerTax() {
+  const out = {};
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const file = path.join(__dirname, "..", "..", "data", "sde", "tax_config.json");
+    if (!fs.existsSync(file)) return out;
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    const servers = raw.servers || {};
+    Object.keys(servers).forEach((k) => {
+      const s = servers[k] || {};
+      out[k] = {
+        salesTax: typeof s.salesTax === "number" ? s.salesTax : TAX_BASE.salesTax,
+        brokerFee: typeof s.brokerFee === "number" ? s.brokerFee : TAX_BASE.brokerFee
+      };
+    });
+  } catch (e) { /* 读不到则退回全局值 */ }
+  return out;
+}
+
+/**
+ * 取某服的税率基准。
+ * @param {string} serverKey 服务器（tranquility / serenity / shuguang）
+ */
+function taxBaseFor(serverKey) {
+  const s = TAX_BY_SERVER[serverKey];
+  if (!s) return TAX_BASE;
+  return {
+    salesTax: s.salesTax,
+    brokerFee: s.brokerFee,
+    brokerFeePerLevel: TAX_BASE.brokerFeePerLevel,
+    salesTaxPerLevel: TAX_BASE.salesTaxPerLevel,
+    brokerFeeMin: TAX_BASE.brokerFeeMin,
+    factionStandingPerPoint: TAX_BASE.factionStandingPerPoint,
+    corpStandingPerPoint: TAX_BASE.corpStandingPerPoint,
+    piImportExportBase: TAX_BASE.piImportExportBase,
+    piTaxPerLevel: TAX_BASE.piTaxPerLevel
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -120,23 +181,52 @@ function lv(skills, id) {
   return Math.max(0, Math.min(5, Math.floor(v)));
 }
 
+/** 声望值：取整并限制在 −10 ~ +10（游戏内声望范围），负声望会提高费率 */
+function standingValue(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 0;
+  return Math.max(-10, Math.min(10, Math.round(n)));
+}
+
 /** 有效销售税（交易税）：乘法口径
  *  官方：7.5% 基础，"can be reduced down to 3.37% through the Accounting skill"
  *  验算：7.5 × (1 − 0.11×5) = 3.375% ✓ 与官方 3.37% 吻合
  *  旧基础值时代：5 × (1 − 0.11×5) = 2.25% ✓ 与当年官方值吻合
  *  → 系数 0.11 本身正确，旧项目的错误只在于基础值用了 1.5%
+ *
+ *  ★ 国服基础值 8%（2026-11-04 实测）：8 × 0.45 = 3.6%，与国服 wiki
+ *    「销售税约 3.6%–8%」吻合 → 系数仍是 0.11，只是基础值按服不同。
+ *
+ * @param {object} skills    技能等级
+ * @param {string} serverKey 服务器（决定基础税率）
  */
-function salesTaxRate(skills) {
-  return Math.max(0, TAX_BASE.salesTax * (1 - 0.11 * lv(skills, "acct")));
+function salesTaxRate(skills, serverKey) {
+  const base = serverKey ? taxBaseFor(serverKey).salesTax : TAX_BASE.salesTax;
+  return Math.max(0, base * (1 - 0.11 * lv(skills, "acct")));
 }
 
 /** 有效经纪费（NPC 站）：减法口径
  *  官方公式：3% − 0.3%×BrokerRelationsLevel − 0.03%×FactionStanding − 0.02%×CorpStanding
  *  5 级 → 1.5%，下限 1%
+ *
+ *  ★ 声望两项的含义（官方中文版原文）：
+ *    势力声望 = 与「空间站所有者所属势力」的声望，每点 −0.03%（满 10 点 → −0.3%）
+ *    军团声望 = 与「空间站所有者军团」的声望，每点 −0.02%（满 10 点 → −0.2%）
+ *    两者合计最多减 0.5%。声望只取未经技能调整的原始值；
+ *    负声望会提高费率。
+ *
+ * @param {object} skills    技能等级
+ * @param {object} standing  { factionStanding, corpStanding } 声望（可缺省）
+ * @param {string} serverKey 服务器（决定基础税率）
  */
-function brokerFeeRate(skills) {
-  const r = TAX_BASE.brokerFee - TAX_BASE.brokerFeePerLevel * lv(skills, "broker_rel");
-  return Math.max(TAX_BASE.brokerFeeMin, r);
+function brokerFeeRate(skills, standing, serverKey) {
+  const t = serverKey ? taxBaseFor(serverKey) : TAX_BASE;
+  let r = t.brokerFee - t.brokerFeePerLevel * lv(skills, "broker_rel");
+  if (standing) {
+    r -= t.factionStandingPerPoint * standingValue(standing.factionStanding);
+    r -= t.corpStandingPerPoint * standingValue(standing.corpStanding);
+  }
+  return Math.max(t.brokerFeeMin, r);
 }
 
 /**
@@ -352,6 +442,9 @@ module.exports = {
   SKILLS,
   ACTIVITY,
   TAX_BASE,
+  TAX_BY_SERVER,
+  taxBaseFor,
+  standingValue,
   lv,
   salesTaxRate,
   brokerFeeRate,

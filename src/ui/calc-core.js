@@ -28,8 +28,19 @@
     brokerFee: 0.03,
     brokerFeePerLevel: 0.003,
     brokerFeeMin: 0.01,
+    factionStandingPerPoint: 0.0003,
+    corpStandingPerPoint: 0.0002,
     piImportExportBase: 0.10,
     piTaxPerLevel: 0.10
+  };
+
+  /* ---------- 各服税率基准（欧服 7.5%/3%，国服 8%/2.5%）---------- */
+  /* ★ 内置兜底值：即使 /api/config 尚未返回，也不会用错服的税率。
+       后端下发后会被 setTaxConfig 覆盖（以后端为准）。 */
+  var TAX_BY_SERVER = {
+    tranquility: { salesTax: 0.075, brokerFee: 0.03 },
+    serenity: { salesTax: 0.08, brokerFee: 0.025 },
+    shuguang: { salesTax: 0.08, brokerFee: 0.025 }
   };
 
   /* ---------- 技能等级取值 ---------- */
@@ -40,20 +51,74 @@
     return Math.min(5, Math.floor(v));
   }
 
+  /** 声望值：取整并限制在 −10 ~ +10（游戏内声望范围），负声望会提高费率 */
+  function standingValue(v) {
+    var n = Number(v);
+    if (!isFinite(n)) return 0;
+    return Math.max(-10, Math.min(10, Math.round(n)));
+  }
+
+  /** 取某服的税率基准 */
+  function taxBaseFor(serverKey) {
+    var s = TAX_BY_SERVER[serverKey];
+    if (!s) return TAX;
+    return {
+      salesTax: s.salesTax,
+      brokerFee: s.brokerFee,
+      brokerFeePerLevel: TAX.brokerFeePerLevel,
+      brokerFeeMin: TAX.brokerFeeMin,
+      factionStandingPerPoint: TAX.factionStandingPerPoint,
+      corpStandingPerPoint: TAX.corpStandingPerPoint
+    };
+  }
+
   /* ---------- 税率 ---------- */
 
   /**
-   * 有效销售税：7.5% × (1 − 0.11 × 会计学等级)
-   * 5 级 → 3.375%（官方 3.37%）
+   * 有效销售税：基础 × (1 − 0.11 × 会计学等级)
+   * 欧服 7.5% × (1 − 0.11×5) = 3.375%（官方 3.37%）
+   * 国服 8%   × (1 − 0.11×5) = 3.6%
    */
-  function salesTaxRate(skills) {
-    return Math.max(0, TAX.salesTax * (1 - 0.11 * lv(skills, "acct")));
+  function salesTaxRate(skills, serverKey) {
+    var base = serverKey ? taxBaseFor(serverKey).salesTax : TAX.salesTax;
+    return salesTaxRateWithBase(skills, base);
   }
 
-  /** 有效经纪费（NPC 站）：3% − 0.3%×等级，下限 1% */
-  function brokerFeeRate(skills) {
-    var r = TAX.brokerFee - TAX.brokerFeePerLevel * lv(skills, "broker_rel");
-    return Math.max(TAX.brokerFeeMin, r);
+  /** 同上，但基础值由调用方指定（用于「用户自定义税率」场景） */
+  function salesTaxRateWithBase(skills, base) {
+    var b = typeof base === "number" ? base : TAX.salesTax;
+    return Math.max(0, b * (1 - 0.11 * lv(skills, "acct")));
+  }
+
+  /**
+   * 有效经纪费（NPC 站）：基础 − 0.3%×等级 − 0.03%×势力声望 − 0.02%×军团声望，下限 1%
+   * 声望只取未经技能调整的原始值；负声望会提高费率。
+   */
+  function brokerFeeRate(skills, standing, serverKey) {
+    var t = serverKey ? taxBaseFor(serverKey) : TAX;
+    return brokerFeeRateWithBase(skills, standing, t.brokerFee);
+  }
+
+  /** 同上，但基础值由调用方指定 */
+  function brokerFeeRateWithBase(skills, standing, base) {
+    var t = serverKeylessTax(base);
+    var r = t.brokerFee - t.brokerFeePerLevel * lv(skills, "broker_rel");
+    if (standing) {
+      r -= t.factionStandingPerPoint * standingValue(standing.factionStanding);
+      r -= t.corpStandingPerPoint * standingValue(standing.corpStanding);
+    }
+    return Math.max(t.brokerFeeMin, r);
+  }
+
+  /** 用给定的基础中介费组装一份临时税率参数 */
+  function serverKeylessTax(base) {
+    return {
+      brokerFee: typeof base === "number" ? base : TAX.brokerFee,
+      brokerFeePerLevel: TAX.brokerFeePerLevel,
+      brokerFeeMin: TAX.brokerFeeMin,
+      factionStandingPerPoint: TAX.factionStandingPerPoint,
+      corpStandingPerPoint: TAX.corpStandingPerPoint
+    };
   }
 
   /** 玩家建筑的经纪费由业主设定，技能不影响 */
@@ -205,16 +270,35 @@
     if (typeof cfg.brokerFee === "number") TAX.brokerFee = cfg.brokerFee;
     if (typeof cfg.brokerFeePerLevel === "number") TAX.brokerFeePerLevel = cfg.brokerFeePerLevel;
     if (typeof cfg.brokerFeeMin === "number") TAX.brokerFeeMin = cfg.brokerFeeMin;
+    if (typeof cfg.factionStandingPerPoint === "number") {
+      TAX.factionStandingPerPoint = Math.abs(cfg.factionStandingPerPoint);
+    }
+    if (typeof cfg.corpStandingPerPoint === "number") {
+      TAX.corpStandingPerPoint = Math.abs(cfg.corpStandingPerPoint);
+    }
     if (typeof cfg.piImportExportBase === "number") TAX.piImportExportBase = cfg.piImportExportBase;
     if (typeof cfg.piTaxPerLevel === "number") TAX.piTaxPerLevel = cfg.piTaxPerLevel;
+    // ★ 各服基准税率（三服不同）
+    if (cfg.servers && typeof cfg.servers === "object") {
+      Object.keys(cfg.servers).forEach(function (k) {
+        var s = cfg.servers[k] || {};
+        if (typeof s.salesTax !== "number" || typeof s.brokerFee !== "number") return;
+        TAX_BY_SERVER[k] = { salesTax: s.salesTax, brokerFee: s.brokerFee };
+      });
+    }
   }
 
   global.EveCalc = {
     TAX: TAX,
+    TAX_BY_SERVER: TAX_BY_SERVER,
     setTaxConfig: setTaxConfig,
+    taxBaseFor: taxBaseFor,
+    standingValue: standingValue,
     lv: lv,
     salesTaxRate: salesTaxRate,
+    salesTaxRateWithBase: salesTaxRateWithBase,
     brokerFeeRate: brokerFeeRate,
+    brokerFeeRateWithBase: brokerFeeRateWithBase,
     brokerFeeRateStructure: brokerFeeRateStructure,
     manufacturingTimeMult: manufacturingTimeMult,
     researchTimeMult: researchTimeMult,

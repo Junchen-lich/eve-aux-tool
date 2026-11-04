@@ -38,6 +38,15 @@
     marketCache: {},      // 行情缓存
     cfg: null,            // /api/config 返回（各服状态与回调地址）
     credentials: {},      // 各服已保存的 Client ID / Secret / 回调地址
+    // ★ 挂单位置与声望（中介费的官方公式含两项声望修正）
+    //   声望与「挂单所在空间站的站主」绑定，所以两者要一起记
+    station: null,        // { id, name, corpName, factionId, factionZh }
+    standing: {           // { factionStanding, corpStanding }
+      factionStanding: 0,
+      corpStanding: 0
+    },
+    // ★ 税率基础值覆盖（按服）—— 用户若发现游戏内读数与内置值不符，可在此改
+    taxOverride: {},      // { [serverKey]: { salesTax, brokerFee } }
     page: "char"          // 当前页面（switchPage 会更新）
   };
 
@@ -1431,8 +1440,9 @@
         runs: P.runs
       });
       var sk = effectiveSkills();
-      var tax = window.EveCalc.salesTaxRate(sk);
-      var fee = window.EveCalc.brokerFeeRate(sk);
+      var taxRates = currentTaxRates();
+      var tax = taxRates.salesTax;
+      var fee = taxRates.brokerFee;
       var timeMult = window.EveCalc.timeMult
         ? window.EveCalc.timeMult(sk)
         : window.EveCalc.manufacturingTimeMult(sk);
@@ -1593,8 +1603,9 @@
     body.innerHTML = "";
 
     var sk = effectiveSkills();
-    var tax = window.EveCalc.salesTaxRate(sk);
-    var fee = window.EveCalc.brokerFeeRate(sk);
+    var taxRates = currentTaxRates();
+    var tax = taxRates.salesTax;
+    var fee = taxRates.brokerFee;
     var slots = window.EveCalc.manufacturingSlots(sk);
 
     body.appendChild(el("div", { class: "tip", html:
@@ -1628,8 +1639,8 @@
 
     function calcSell() {
       out.innerHTML = "";
-      var tax2 = window.EveCalc.salesTaxRate(sk);
-      var fee2 = window.EveCalc.brokerFeeRate(sk);
+      var tax2 = currentTaxRates().salesTax;
+      var fee2 = currentTaxRates().brokerFee;
       /* 输入为百分数（15 = 15%），公式需要小数（0.15） */
       var target = (p.targetPct || 0) / 100;
 
@@ -1758,6 +1769,250 @@
   /* ================================================================ *
    * 页面：设置
    * ================================================================ */
+  /* ================================================================ *
+   * 税率与声望配置区
+   *
+   * ★ 中介费的官方公式含两项声望修正，而声望的取值取决于「在哪个站挂单」
+   *   （站主所属势力 / 站主军团），所以这里把空间站选择与声望输入放在一起。
+   * ================================================================ */
+  function renderTaxStandingBox() {
+    var box = el("div", { class: "card", style: "margin-top:12px" });
+    var bd = el("div", { class: "card-bd" });
+
+    /* --- 1. 挂单空间站 --- */
+    bd.appendChild(el("div", { style: "font-weight:500;margin-bottom:8px", text: "① 挂单所在空间站" }));
+
+    var st = S.station;
+    var stationLine = el("div", { class: "tip", style: "margin-bottom:8px" });
+    if (st) {
+      var ownerTxt = st.factionZh
+        ? ("站主 " + (st.corpName || "—") + " · 所属势力 " + st.factionZh)
+        : (st.corpName ? ("站主 " + st.corpName + " · 势力未识别（多为玩家自建站，业主自设费率）") : "站主未识别");
+      stationLine.innerHTML = "当前：<b>" + escapeHtml(st.name || ("ID " + st.id)) + "</b><br>" +
+        "<span style=\"color:var(--fg-3)\">" + escapeHtml(ownerTxt) + "</span>";
+    } else {
+      stationLine.innerHTML = "未选择。声望与站主绑定，请先选你挂单的空间站。";
+    }
+    bd.appendChild(stationLine);
+
+    // 搜索框
+    var searchRow = el("div", { class: "row", style: "margin-bottom:8px" });
+    var kw = el("input", { type: "text", class: "mono", placeholder: "搜索空间站（站名 / 星系 / 区域）", style: "flex:1;min-width:180px" });
+    var searchBtn = el("button", { class: "btn sm", text: "搜索" });
+    searchRow.appendChild(kw);
+    searchRow.appendChild(searchBtn);
+    bd.appendChild(searchRow);
+
+    var results = el("div", { style: "margin-bottom:10px" });
+    bd.appendChild(results);
+
+    // 已选站的详情 + 声望输入
+    var standBox = el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line)" });
+    bd.appendChild(standBox);
+
+    function renderStandingInputs() {
+      standBox.innerHTML = "";
+      var factions = (S.cfg && S.cfg.factions) || [];
+      var cur = S.station;
+
+      standBox.appendChild(el("div", { style: "font-weight:500;margin-bottom:8px", text: "② 声望" }));
+
+      if (!cur) {
+        standBox.appendChild(el("div", { class: "tip", html:
+          "选好空间站后，这里会显示对应的<b>势力声望</b>与<b>军团声望</b>输入框。" +
+          "<br>可在游戏内「角色 → 声望」查看这两项数值（填<b>原始值</b>，不含外交/关系学等技能加成）。"
+        }));
+        return;
+      }
+
+      // 势力声望：优先按站主所属势力预填
+      var factionList = factions;
+      var fSel = el("select", { style: "flex:1;min-width:160px" });
+      factionList.forEach(function (f) {
+        fSel.appendChild(el("option", {
+          value: String(f.factionId),
+          text: f.nameZh + (cur.factionId === f.factionId ? "（站主所属）" : ""),
+          selected: cur.factionId === f.factionId ? "selected" : null
+        }));
+      });
+      // 站主势力未识别时，允许手填数值（选势力仍可用）
+      var fNum = el("input", { type: "number", class: "mono", style: "width:80px", min: "-10", max: "10", step: "1",
+        value: String(S.standing.factionStanding || 0) });
+      var fRow = el("div", { class: "row", style: "margin-bottom:8px;align-items:center" }, [
+        el("span", { style: "font-size:12px;width:88px", text: "势力声望" }),
+        fSel, fNum
+      ]);
+      standBox.appendChild(fRow);
+
+      var cNum = el("input", { type: "number", class: "mono", style: "width:80px", min: "-10", max: "10", step: "1",
+        value: String(S.standing.corpStanding || 0) });
+      var cRow = el("div", { class: "row", style: "margin-bottom:8px;align-items:center" }, [
+        el("span", { style: "font-size:12px;width:88px", text: "军团声望" }),
+        el("span", { style: "font-size:12px;color:var(--fg-3);flex:1",
+          text: cur.corpName ? ("站主：" + cur.corpName) : "（站主军团，未识别可手填）" }),
+        cNum
+      ]);
+      standBox.appendChild(cRow);
+
+      // 从 ESI 自动读取（需对应 scope）
+      var autoBtn = el("button", { class: "btn sm", text: "从角色数据读取声望" });
+      autoBtn.addEventListener("click", function () {
+        if (!S.char || !S.char.id) {
+          standBox.appendChild(el("div", { class: "tip", style: "color:var(--warn);margin-top:6px",
+            text: "尚未授权角色，无法读取。" }));
+          return;
+        }
+        autoBtn.disabled = true;
+        autoBtn.textContent = "读取中…";
+        api("/api/standing?server=" + encodeURIComponent(S.server) + "&characterId=" + S.char.id)
+          .then(function (j) {
+            autoBtn.disabled = false;
+            autoBtn.textContent = "从角色数据读取声望";
+            if (!j.ok) {
+              standBox.appendChild(el("div", { class: "tip", style: "color:var(--warn);margin-top:6px",
+                text: j.error || "读取失败" }));
+              return;
+            }
+            // 取站主所属势力的声望
+            var target = cur.factionId;
+            var hit = (j.factions || []).filter(function (x) { return x.factionId === target; })[0];
+            if (hit) {
+              fNum.value = String(hit.standing);
+              S.standing.factionStanding = hit.standing;
+            } else {
+              standBox.appendChild(el("div", { class: "tip", style: "margin-top:6px",
+                text: "未找到站主所属势力的声望条目，请手填。" }));
+            }
+            saveLocalTax();
+            renderStandingInputs();
+          })
+          .catch(function (e) {
+            autoBtn.disabled = false;
+            autoBtn.textContent = "从角色数据读取声望";
+            standBox.appendChild(el("div", { class: "tip", style: "color:var(--warn);margin-top:6px",
+              text: "读取失败：" + e.message }));
+          });
+      });
+      var autoRow = el("div", { class: "row", style: "margin-bottom:8px" }, [autoBtn]);
+      standBox.appendChild(autoRow);
+
+      function onChange() {
+        S.standing.factionStanding = window.EveCalc.standingValue(fNum.value);
+        S.standing.corpStanding = window.EveCalc.standingValue(cNum.value);
+        saveLocalTax();
+        renderRatePreview();
+        if (S.page === "set") renderSet();
+      }
+      fNum.addEventListener("change", onChange);
+      cNum.addEventListener("change", onChange);
+
+      // 实时费率预览
+      var prev = el("div", { class: "kv", style: "margin-top:8px" });
+      standBox.appendChild(prev);
+      renderRatePreview(prev);
+
+      /* --- 基础值覆盖（游戏内读数与内置值不符时可自行校准）--- */
+      var ov = (S.taxOverride || {})[S.server] || {};
+      var curBase = currentTaxRates();
+      var stInput = el("input", { type: "number", class: "mono", style: "width:90px",
+        min: "0", max: "50", step: "0.1",
+        value: String((ov.salesTax != null ? ov.salesTax : curBase.baseSalesTax) * 100) });
+      var bfInput = el("input", { type: "number", class: "mono", style: "width:90px",
+        min: "0", max: "50", step: "0.1",
+        value: String((ov.brokerFee != null ? ov.brokerFee : curBase.baseBrokerFee) * 100) });
+      var ovBox = el("div", { style: "margin-top:10px;padding-top:8px;border-top:1px solid var(--line)" });
+      ovBox.appendChild(el("div", { style: "font-size:12px;color:var(--fg-2);margin-bottom:6px",
+        text: "基础税率校准（填百分数；留空用内置值）" }));
+      ovBox.appendChild(el("div", { class: "row", style: "margin-bottom:6px;align-items:center" }, [
+        el("span", { style: "font-size:12px;width:88px", text: "销售税基础" }), stInput,
+        el("span", { style: "font-size:12px;color:var(--fg-3);margin-left:8px", text: "%" })
+      ]));
+      ovBox.appendChild(el("div", { class: "row", style: "margin-bottom:6px;align-items:center" }, [
+        el("span", { style: "font-size:12px;width:88px", text: "中介费基础" }), bfInput,
+        el("span", { style: "font-size:12px;color:var(--fg-3);margin-left:8px", text: "%" })
+      ]));
+      var ovBtn = el("button", { class: "btn sm", text: "应用" });
+      ovBox.appendChild(el("div", { class: "row" }, [ovBtn]));
+      standBox.appendChild(ovBox);
+
+      ovBtn.addEventListener("click", function () {
+        var s = Number(stInput.value) / 100;
+        var b = Number(bfInput.value) / 100;
+        var cur = {};
+        if (isFinite(s) && s >= 0 && s <= 0.5) cur.salesTax = s;
+        if (isFinite(b) && b >= 0 && b <= 0.5) cur.brokerFee = b;
+        if (!Object.keys(cur).length) {
+          // 填了无效值 → 恢复内置
+          delete (S.taxOverride || {})[S.server];
+        } else {
+          S.taxOverride = S.taxOverride || {};
+          S.taxOverride[S.server] = cur;
+        }
+        saveLocalTax();
+        if (S.page === "set") renderSet();
+      });
+    }
+
+    function renderRatePreview(target) {
+      var box2 = target || standBox.querySelector(".kv");
+      if (!box2) return;
+      box2.innerHTML = "";
+      var r = currentTaxRates();
+      [
+        ["基础销售税", pct(r.baseSalesTax), ""],
+        ["基础中介费", pct(r.baseBrokerFee), ""],
+        ["你的销售税", pct(r.salesTax), "acc"],
+        ["你的中介费", pct(r.brokerFee), "acc"]
+      ].forEach(function (row) {
+        box2.appendChild(el("div", { class: "r" }, [
+          el("span", { class: "k", text: row[0] }),
+          el("span", { class: "v " + row[2], text: row[1] })
+        ]));
+      });
+    }
+
+    /* --- 搜索行为 --- */
+    function doSearch() {
+      results.innerHTML = "";
+      var q = kw.value.trim();
+      api("/api/stations?q=" + encodeURIComponent(q) + "&limit=20")
+        .then(function (j) {
+          var list = j.stations || [];
+          if (!list.length) {
+            results.appendChild(el("div", { class: "tip", text: "没有匹配的空间站。" }));
+            return;
+          }
+          list.forEach(function (s) {
+            var ownerHint = s.factionZh ? s.factionZh : (s.ownerKnown ? "中立组织" : "业主自设");
+            var row = el("div", { class: "row", style: "margin-bottom:4px;align-items:center" }, [
+              el("span", { style: "flex:1;font-size:12px",
+                text: s.name + "　[" + s.systemName + " · " + s.regionName + " · " + ownerHint + "]" }),
+              el("button", { class: "btn sm", text: "选用", onclick: function () {
+                S.station = {
+                  id: s.id, name: s.name, corpName: s.corpName,
+                  factionId: s.factionId, factionZh: s.factionZh
+                };
+                saveLocalTax();
+                results.innerHTML = "";
+                renderStandingInputs();
+                if (S.page === "set") renderSet();
+              } })
+            ]);
+            results.appendChild(row);
+          });
+        })
+        .catch(function (e) {
+          results.appendChild(el("div", { class: "tip", style: "color:var(--warn)", text: "搜索失败：" + e.message }));
+        });
+    }
+    searchBtn.addEventListener("click", doSearch);
+    kw.addEventListener("keydown", function (e) { if (e.key === "Enter") doSearch(); });
+
+    renderStandingInputs();
+    box.appendChild(bd);
+    return box;
+  }
+
   function renderSet() {
     var body = $("#setBody");
     body.innerHTML = "";
@@ -1768,12 +2023,13 @@
     }));
 
     var kv = el("div", { class: "kv", style: "margin-top:16px" });
+    var taxRates = currentTaxRates();
     [
       ["运行模式", S.char ? "已授权角色" : "未授权（单用户）", ""],
-      ["服务器", serverLabel(), "acc"],
+      ["服务器", serverLabel(), ""],
       ["市场星域", regionName(), ""],
-      ["销售税率", pct(window.EveCalc.salesTaxRate(effectiveSkills())), "acc"],
-      ["经纪费率", pct(window.EveCalc.brokerFeeRate(effectiveSkills())), "acc"],
+      ["销售税率", pct(taxRates.salesTax), "acc"],
+      ["经纪费率", pct(taxRates.brokerFee), "acc"],
       ["制造槽 / 实验室槽", window.EveCalc.manufacturingSlots(effectiveSkills()) + " / " + window.EveCalc.labSlots(effectiveSkills()), ""]
     ].forEach(function (r) {
       kv.appendChild(el("div", { class: "r" }, [
@@ -1782,6 +2038,17 @@
       ]));
     });
     body.appendChild(kv);
+
+    /* ---------- 税率与声望（挂单相关）---------- */
+    body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:24px 0 10px", text: "税率与声望（挂单相关）" }));
+    body.appendChild(el("div", { class: "tip", html:
+      "中介费的官方公式是 <code>基础 − 0.3%×经纪人关系学 − 0.03%×势力声望 − 0.02%×军团声望</code>（下限 1%）。" +
+      "<br>★ <b>三服税率不同</b>：欧服销售税 7.5%、中介费 3%；国服（晨曦/曙光）销售税 8%、中介费 2.5% —— " +
+      "本工具按当前选中的服务器自动取值。" +
+      "<br>★ 两项声望都<b>相对于挂单所在空间站的站主</b>：势力声望查「站主所属势力」，军团声望查「站主军团」。" +
+      "所以要先选挂单空间站。声望只取未经技能调整的原始值，负声望会提高费率。"
+    }));
+    body.appendChild(renderTaxStandingBox());
 
     /* ---------- 授权凭据（分服独立配置）---------- */
     body.appendChild(el("div", { style: "font-size:13px;color:var(--fg-2);margin:24px 0 10px", text: "授权凭据（各服独立）" }));
@@ -1918,9 +2185,64 @@
           redirectUri: sv.redirectUri || ""
         };
       });
+      // ★ 税率参数注入（三服基准值 + 声望系数）
+      if (cfg.tax && window.EveCalc) window.EveCalc.setTaxConfig(cfg.tax);
+      // ★ 恢复挂单位置、声望与税率覆盖（存在本地）
+      var st = readLocalTax();
+      if (st) {
+        S.station = st.station || null;
+        S.standing = st.standing || { factionStanding: 0, corpStanding: 0 };
+        S.taxOverride = st.taxOverride || {};
+      }
       if (S.page === "set") renderSet();
       return cfg;
     });
+  }
+
+  /* ================================================================ *
+   * 挂单位置与声望的本地持久化
+   *
+   * ★ 为什么单独存：挂单在哪个站，决定了势力声望该查哪个势力、
+   *   军团声望该查哪个军团 —— 这与技能等级无关，是另一组数据。
+   * ================================================================ */
+  var LOCAL_TAX_KEY = "eve_tax_v1";
+
+  function readLocalTax() {
+    try {
+      var raw = localStorage.getItem(LOCAL_TAX_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function saveLocalTax() {
+    try {
+      localStorage.setItem(LOCAL_TAX_KEY, JSON.stringify({
+        station: S.station,
+        standing: S.standing,
+        taxOverride: S.taxOverride
+      }));
+    } catch (e) { /* 隐私模式下不可写，忽略 */ }
+  }
+
+  /**
+   * 当前生效的税率（含声望、按服基准、用户覆盖）。
+   * ★ 覆盖优先级：用户手动改的值 > 内置各服基准值。
+   *   国服基础值取自 2026-11-04 游戏内实测读数；若日后官方调整，
+   *   用户可在此自行校准，不必改代码。
+   */
+  function currentTaxRates() {
+    var sk = effectiveSkills();
+    var st = S.standing || {};
+    var ov = (S.taxOverride || {})[S.server];
+    var base = window.EveCalc.taxBaseFor(S.server);
+    var salesTax = ov && typeof ov.salesTax === "number" ? ov.salesTax : base.salesTax;
+    var brokerFee = ov && typeof ov.brokerFee === "number" ? ov.brokerFee : base.brokerFee;
+    return {
+      salesTax: window.EveCalc.salesTaxRateWithBase(sk, salesTax),
+      brokerFee: window.EveCalc.brokerFeeRateWithBase(sk, st, brokerFee),
+      baseSalesTax: salesTax,
+      baseBrokerFee: brokerFee
+    };
   }
 
   function serverLabel() {
@@ -1961,7 +2283,22 @@
     if (PAGE_INIT[key]) {
       try { PAGE_INIT[key](); } catch (e) {
         console.error(e);
+        // ★ 把渲染错误回报到服务端日志 —— 否则被 console.error 吞掉，
+        //   页面上只表现为「内容没出来」，极难排查。
+        try {
+          navigator.sendBeacon("/api/client-error", JSON.stringify({
+            page: key, message: e && e.message ? e.message : String(e),
+            stack: e && e.stack ? String(e.stack).slice(0, 800) : ""
+          }));
+        } catch (x) { /* 忽略 */ }
       }
+    } else {
+      // 兜底诊断：页面初始化函数缺失也会导致「点了没反应」
+      try {
+        navigator.sendBeacon("/api/client-error", JSON.stringify({
+          page: key, message: "PAGE_INIT 缺少该页的初始化函数", stack: ""
+        }));
+      } catch (x) { /* 忽略 */ }
     }
   }
 
@@ -2012,21 +2349,13 @@
             renderChar();
             renderSell();
             renderIndustry();
+            if (S.page === "set") renderSet();
           }
         }));
       });
-      // 税率参数注入（与 Node 内核同源）
-      return fetch("data/sde/tax_config.json").then(function (r) { return r.json(); })
-        .then(function (tax) {
-          window.EveCalc.setTaxConfig({
-            salesTax: tax.salesTax.base,
-            brokerFee: tax.brokerFee.base,
-            brokerFeePerLevel: Math.abs(tax.brokerFee.perLevel),
-            brokerFeeMin: tax.brokerFee.floor,
-            piImportExportBase: tax.planetaryTax.base,
-            piTaxPerLevel: Math.abs(tax.planetaryTax.perLevel)
-          });
-        });
+      // ★ 税率参数已由 loadConfig 从 /api/config 注入（含各服基准值与声望系数）
+      //   —— 此处不再重复 fetch tax_config.json：那会让整条链多一个失败点，
+      //   且旧字段结构缺 servers 段，会把按服基准值冲掉。
     }).catch(function (e) {
       toast("加载配置失败：" + e.message, "err");
     });

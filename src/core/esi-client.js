@@ -314,6 +314,24 @@ class EsiClient {
   async getCharacterPublic(characterId) {
     return this.request(ESI.charPublic(characterId), null, { auth: false });
   }
+
+  /**
+   * 角色声望列表（各势力/军团）
+   * 需 scope：esi-characters.read_standings.v1
+   * 返回 [{ from_id, from_type, standing }]，from_type 为 faction 或 corporation
+   */
+  async getStandings(characterId) {
+    return this.requestAll(ESI.charStandings(characterId), null, { auth: true });
+  }
+
+  /**
+   * 空间站信息（含 owner 字段）
+   * 免鉴权。注意：ESI 该端点**不返回 faction_id**，
+   * 站主所属势力需自行由 owner 映射。
+   */
+  async getStation(stationId) {
+    return this.request(ESI.universeStations(stationId), null, { auth: false });
+  }
 }
 
 module.exports = { EsiClient, UA };

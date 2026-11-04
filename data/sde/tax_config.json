@@ -1,16 +1,40 @@
 {
   "_meta": {
-    "version": "0.1.0",
-    "updated": "2026-11-03",
-    "note": "税率与工业费基准，属游戏机制常量，必须人工维护并随游戏版本核对。",
+    "version": "0.2.0",
+    "updated": "2026-11-04",
+    "note": "税率与工业费基准，属游戏机制常量，必须人工维护并随游戏版本核对。★ 三服税率不同，必须按服务器取值 —— 不可用全局单值。",
     "sources": [
-      "CCP 支持中心《Broker Fee and Sales Tax》— 销售税 7.5% 基础、经纪费 3% 基础",
-      "EVEU Wiki《Tax》— 经纪费含声望项、玩家建筑例外",
-      "CCP 版本 22.02 补丁说明（2025-03-12）— 销售税由 4% 上调至 7.5%",
+      "CCP 支持中心《Broker Fee and Sales Tax》中文版 — 中介费 3% 基础、经纪人关系学每级 −0.3%、势力声望每点 −0.03%、军团声望每点 −0.02%、下限 1%；销售税 7.5% 基础、会计学每级 −11%（相对）、最低 3.37%",
+      "EVEU Wiki《Tax》— 中介费含声望项、玩家建筑例外、声望只取未经技能调整的原始值",
+      "CCP 版本 22.02 补丁说明（2025-03-12）— 欧服销售税由 4% 上调至 7.5%",
+      "★ 国服数值：2026-11-04 用户在国服曙光服游戏内实测读数 —— 销售税 8%、中介费 2.5%；与国服 wiki（biligame《交易方式》「销售税约 3.6%–8%」）交叉吻合：8% × (1 − 0.11×5) = 3.6%",
       "EVE 中文维基《制造》— 工业费 = 估算价值 × 成本指数"
     ],
-    "reviewTrigger": "CCP 版本公告提到税率或工业费变更"
+    "reviewTrigger": "CCP 版本公告提到税率或工业费变更；或用户报告游戏内读数与本表不符"
   },
+
+  "_serversNote": "★ 各服税率基准。三服独立，不可混用。欧服 = CCP 官方口径；国服 = 网易自行运营的独立数值（国服 wiki 的初始 5% 已过时，勿作准）。",
+  "servers": {
+    "tranquility": {
+      "label": "欧服（宁静）",
+      "salesTax": 0.075,
+      "brokerFee": 0.03,
+      "note": "CCP 版本 22.02（2025-03-12）起销售税 7.5%，会计学 5 级 → 3.375%（官方 3.37%）；中介费 3%，经纪人关系学 5 级 → 1.5%。"
+    },
+    "serenity": {
+      "label": "国服 晨曦",
+      "salesTax": 0.08,
+      "brokerFee": 0.025,
+      "note": "★ 2026-11-04 游戏内实测：销售税 8%、中介费 2.5%。验算：8% × (1 − 0.11×5) = 3.6%，与国服 wiki「销售税约 3.6%–8%」区间吻合。"
+    },
+    "shuguang": {
+      "label": "国服 曙光",
+      "salesTax": 0.08,
+      "brokerFee": 0.025,
+      "note": "★ 与晨曦同集群、同税率数值。2026-11-04 游戏内实测：销售税 8%、中介费 2.5%。"
+    }
+  },
+
   "salesTax": {
     "base": 0.075,
     "perLevel": 0.11,
@@ -18,28 +42,43 @@
     "skill": "acct",
     "skillNameZh": "会计学",
     "floor": 0,
-    "note": "★ 乘法口径。验算：7.5% × (1 − 0.11×5) = 3.375%，与官方『reduced down to 3.37%』吻合。旧基础值时代 5% × 0.45 = 2.25% 也与当年官方值吻合，故系数 0.11 正确。基础值在版本 22.02（2025-03-12）由 4% 上调至 7.5%。",
+    "note": "★ 乘法口径（相对减免）。验算：欧服 7.5% × (1 − 0.11×5) = 3.375%，与官方『reduced down to 3.37%』吻合；国服 8% × 0.45 = 3.6%，与国服 wiki「约 3.6%–8%」吻合。旧基础值时代 5% × 0.45 = 2.25% 也与当年官方值吻合，故系数 0.11 正确。★ 基础值按服取 servers 段，勿用此处的 base。",
     "source": "CCP 支持中心《Broker Fee and Sales Tax》"
   },
   "brokerFee": {
     "base": 0.03,
     "perLevel": 0.003,
-    "formula": "base − perLevel × 经纪人关系学等级",
+    "formula": "base − perLevel × 经纪人关系学等级 − |factionStandingPerPoint| × 势力声望 − |corpStandingPerPoint| × 军团声望",
     "skill": "broker_rel",
     "skillNameZh": "经纪人关系学",
     "floor": 0.01,
-    "factionStandingPerPoint": -0.0003,
-    "corpStandingPerPoint": -0.0002,
+    "factionStandingPerPoint": 0.0003,
+    "corpStandingPerPoint": 0.0002,
+    "maxFactionStandingBonus": 0.003,
+    "maxCorpStandingBonus": 0.002,
+    "standingScope": "NPC 空间站",
     "structureOwnerSets": true,
-    "note": "★ 减法口径。官方公式：3% − 0.3%×BrokerRelationsLevel − 0.03%×FactionStanding − 0.02%×CorpStanding，最低 1%。玩家建筑由业主设定，技能与声望均不影响。",
+    "note": "★ 减法口径。官方公式：3% − 0.3%×BrokerRelationsLevel − 0.03%×FactionStanding − 0.02%×CorpStanding，最低 1%。★ 声望两项的含义与取值范围：①势力声望 = 与「空间站所有者所属势力」的声望（如加达里联邦 500001），每点 −0.03%，满值 10 点 → −0.3%；②军团声望 = 与「空间站所有者军团」的声望，每点 −0.02%，满值 10 点 → −0.2%。★ 声望只取未经技能调整的原始值（『关系学』『外交』等增加有效声望的技能不影响此项）；负声望会提高费率。★ 玩家建筑由业主设定费率，技能与声望均不影响。",
     "source": "CCP 支持中心《Broker Fee and Sales Tax》"
   },
+
+  "standingHints": {
+    "note": "★ 声望取哪个值，取决于你挂单所在空间站的站主。势力声望查『站主所属势力』，军团声望查『站主军团』。站主可从 ESI /universe/stations/{id}/ 的 owner 字段取得（国服与欧服该端点均可用，但均不返回 faction_id，需自行映射 owner → 势力）。",
+    "factionStandingExamples": [
+      { "factionId": 500001, "nameEn": "Caldari State", "nameZh": "加达里联邦" },
+      { "factionId": 500002, "nameEn": "Minmatar Republic", "nameZh": "米玛塔尔共和国" },
+      { "factionId": 500003, "nameEn": "Amarr Empire", "nameZh": "艾玛帝国" },
+      { "factionId": 500004, "nameEn": "Gallente Federation", "nameZh": "盖伦特联邦" }
+    ],
+    "maxStanding": 10
+  },
+
   "planetaryTax": {
     "base": 0.10,
     "perLevel": -0.10,
     "skill": "pi_customs",
-    "skillNameZh": "报关代码专家",
-    "note": "NPC 基础税 10%，报关代码专家每级 -10%（5 级 → 5%）。POCO 业主另可加收，合计最高 100%。低安/nullsec/虫洞不适用。",
+    "skillNameZh": "海关操作专业理论",
+    "note": "NPC 基础税 10%，海关操作专业理论每级 -10%（5 级 → 5%）。POCO 业主另可加收，合计最高 100%。低安/nullsec/虫洞不适用。",
     "source": "EVEU Wiki《Tax》"
   },
   "reprocessingTax": {
