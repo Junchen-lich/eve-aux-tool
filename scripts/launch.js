@@ -186,7 +186,8 @@ function localFingerprint() {
       path.join("src", "core", "esi-client.js"),
       path.join("src", "core", "user-store.js"),
       path.join("src", "ui", "app.js"),
-      path.join("src", "ui", "calc-core.js")
+      path.join("src", "ui", "calc-core.js"),
+      path.join("src", "ui", "server-switch.js")
     ];
     const h = crypto.createHash("sha256");
     for (const f of files) {
@@ -712,7 +713,8 @@ function runTests() {
     "src/core/user-store.test.js",
     "src/core/server-routes.test.js",
     "src/data/store.test.js",
-    "src/ui/calc-core.test.js"
+    "src/ui/calc-core.test.js",
+    "src/ui/server-switch.test.js"
   ];
 
   (async () => {

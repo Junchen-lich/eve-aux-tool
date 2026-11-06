@@ -79,7 +79,8 @@ const CODE_FINGERPRINT = (() => {
       path.join("src", "core", "esi-client.js"),
       path.join("src", "core", "user-store.js"),
       path.join("src", "ui", "app.js"),
-      path.join("src", "ui", "calc-core.js")
+      path.join("src", "ui", "calc-core.js"),
+      path.join("src", "ui", "server-switch.js")
     ];
     const crypto = require("crypto");
     const h = crypto.createHash("sha256");

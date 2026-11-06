@@ -22,10 +22,14 @@
 (function () {
   "use strict";
 
+  /* 服务器切换的纯逻辑（不依赖 DOM，可离线单测；见 server-switch.js） */
+  var SS = window.EveServerSwitch;
+
   /* ================================================================ *
    * 状态
    * ================================================================ */
   var S = {
+    // 初始值仅作占位：init() 会用「本地保存值 + 三服兜底表」重新解析
     server: "serenity",
     servers: [],
     char: null,          // { id, name, serverKey, skills:{}, ... }
@@ -432,6 +436,13 @@
   }
 
   function startAuth(serverKey) {
+    // 角色页会列出三服的授权按钮。授权目标服必须与左上角选中服一致，
+    // 否则 SSO 回调后角色档案属于 A 服、界面却停在 B 服（三服数据不可混用）。
+    if (SS.isKnown(S.servers, serverKey) && serverKey !== S.server) {
+      S.server = serverKey;
+      SS.save(localStore(), serverKey);
+      syncServerButtons();
+    }
     var scope = "esi-skills.read_skills.v1";
     location.href = "/sso/start?server=" + encodeURIComponent(serverKey) + "&scope=" + encodeURIComponent(scope);
   }
@@ -2166,6 +2177,104 @@
   }
 
   /* ================================================================ *
+   * 服务器切换（左上角三服按钮）
+   *
+   * ★ 三条硬约束：
+   *   1. 打开页面立刻可点 —— 按钮用内置兜底表先渲染，不等 /api/config；
+   *      配置回来后再按服务端列表刷新一次（配置失败也不影响切换）。
+   *   2. 点了必须看得见 —— 高亮用 dataset.server 比对。绝不能用
+   *      button.text：HTMLButtonElement 没有 text 属性，恒为 undefined，
+   *      会把三个按钮的 .on 全清掉，用户就会觉得「点了没反应」。
+   *   3. 三服数据不可混用 —— 切服要清缓存、重绘当前页、持久化，
+   *      角色档案必须同服，否则宁可清空也不能拿别服技能算税率。
+   * ================================================================ */
+
+  /** localStorage 在某些隐私模式下连 getter 都会抛，统一兜一层 */
+  function localStore() {
+    try { return window.localStorage; } catch (e) { return null; }
+  }
+
+  function renderServerSelector() {
+    var sel = $("#serverSel");
+    if (!sel) return;
+    // 列表没变时只同步高亮，不要重建 DOM ——
+    // 否则 /api/config 恰好在用户按下按钮的那一刻返回，会把正被点击的
+    // 元素替换掉，这一次点击就丢了（表现为偶发「点了没反应」）。
+    var existing = $$("#serverSel button");
+    var sameShape = existing.length === S.servers.length &&
+      existing.every(function (b, i) {
+        return b.dataset.server === S.servers[i].key;
+      });
+    if (sameShape) { syncServerButtons(); return; }
+
+    sel.innerHTML = "";
+    S.servers.forEach(function (sv) {
+      sel.appendChild(el("button", {
+        class: sv.key === S.server ? "on" : "",
+        text: sv.short,
+        title: sv.label + "（点击后行情、税率与星域按该服重算）",
+        "data-server": sv.key,
+        onclick: function () { switchServer(sv.key); }
+      }));
+    });
+  }
+
+  /** 只同步高亮，不重建按钮（避免把刚点下的元素替换掉） */
+  function syncServerButtons() {
+    var map = SS.highlightMap(S.servers, S.server);
+    $$("#serverSel button").forEach(function (b) {
+      b.classList.toggle("on", !!map[b.dataset.server]);
+    });
+  }
+
+  function switchServer(key) {
+    var p = SS.plan(S.server, key, S.servers, S.char ? S.char.serverKey : null);
+    if (!p.ok) { toast("未知服务器：" + key, "err"); return; }
+
+    // ★ 顺序不能反：必须先把 S.server 改成目标服，再同步高亮。
+    //   若在赋值前调用 syncServerButtons()，它会读到旧值，高亮会永远
+    //   滞后一个服（点欧服却仍高亮晨曦），看起来就是「点了没反应」。
+    if (p.changed) {
+      S.server = p.key;
+      SS.save(localStore(), p.key);        // 刷新页面后仍停在用户选的服
+    }
+    syncServerButtons();                   // 按最新的 S.server 同步高亮
+    if (!p.changed) return;
+
+    if (p.clearCaches) {                   // 三服数据隔离，旧服缓存一律作废
+      S.marketCache = {};
+      S.lastCalc = null;
+    }
+
+    // 角色跨服：优先恢复该服本地档案，没有就清空，绝不沿用别服技能
+    var charNote = "";
+    if (p.charMismatch) {
+      var hit = (S.profiles || []).filter(function (x) { return x.serverKey === p.key; })[0];
+      if (hit && restoreFromProfile(hit)) {
+        charNote = "已切换到该服保存的角色「" + (S.char.name || S.char.id) + "」";
+      } else {
+        S.char = null;
+        S.skills = {};
+        S.skillOverride = {};
+        updateChip();
+        charNote = "该服暂无角色档案，已清空别服角色（切回原服会自动恢复）";
+      }
+    }
+
+    // 只重绘当前页；其他页会在 switchPage 时按需重绘
+    try {
+      var fn = PAGE_INIT[S.page];
+      if (fn) fn();
+    } catch (e) {
+      reportClientError(S.page, e);
+    }
+
+    toast("已切换到 " + SS.labelOf(S.servers, p.key) +
+      "：税率、行情与星域均按该服重算", "ok");
+    if (charNote) toast(charNote, "err");
+  }
+
+  /* ================================================================ *
    * 服务器与区域
    * ================================================================ */
 
@@ -2176,7 +2285,10 @@
   function loadConfig() {
     return api("/api/config").then(function (cfg) {
       S.cfg = cfg;
-      S.servers = cfg.servers || [];
+      S.servers = SS.normalizeServers(cfg.servers);
+      // 服务端列表可能与兜底表不同；保持用户当前选择，失效才回落
+      S.server = SS.resolveInitialServer(S.server, S.servers, S.server);
+      renderServerSelector();
       // 回显各服已保存的凭据
       S.credentials = {};
       S.servers.forEach(function (sv) {
@@ -2272,6 +2384,20 @@
     set: renderSet
   };
 
+  /**
+   * 前端渲染异常回报到服务端日志。
+   * ★ 否则异常被 console.error 吞掉，页面上只表现为「点了没反应」，极难排查。
+   */
+  function reportClientError(page, e) {
+    console.error(e);
+    try {
+      navigator.sendBeacon("/api/client-error", JSON.stringify({
+        page: page, message: e && e.message ? e.message : String(e),
+        stack: e && e.stack ? String(e.stack).slice(0, 800) : ""
+      }));
+    } catch (x) { /* 忽略 */ }
+  }
+
   function switchPage(key) {
     S.page = key;
     $$("#nav button").forEach(function (b) {
@@ -2281,17 +2407,7 @@
       p.classList.toggle("on", p.id === "page-" + key);
     });
     if (PAGE_INIT[key]) {
-      try { PAGE_INIT[key](); } catch (e) {
-        console.error(e);
-        // ★ 把渲染错误回报到服务端日志 —— 否则被 console.error 吞掉，
-        //   页面上只表现为「内容没出来」，极难排查。
-        try {
-          navigator.sendBeacon("/api/client-error", JSON.stringify({
-            page: key, message: e && e.message ? e.message : String(e),
-            stack: e && e.stack ? String(e.stack).slice(0, 800) : ""
-          }));
-        } catch (x) { /* 忽略 */ }
-      }
+      try { PAGE_INIT[key](); } catch (e) { reportClientError(key, e); }
     } else {
       // 兜底诊断：页面初始化函数缺失也会导致「点了没反应」
       try {
@@ -2306,6 +2422,14 @@
    * 初始化
    * ================================================================ */
   function init() {
+    // ★ 服务器切换最先就位：用内置三服兜底表立刻渲染并绑定事件，
+    //   同时恢复上次选择。此前这段代码挂在 loadConfig().then() 里 ——
+    //   配置没回来（或 /api/config 失败）时按钮根本不存在，
+    //   用户「打开页面后点服务器」自然毫无反应。
+    S.servers = SS.normalizeServers(null);
+    S.server = SS.resolveInitialServer(SS.readSaved(localStore()), S.servers, SS.DEFAULT_KEY);
+    renderServerSelector();
+
     // 事件绑定
     $$("#nav button").forEach(function (b) {
       b.addEventListener("click", function () { switchPage(b.dataset.page); });
@@ -2333,31 +2457,17 @@
       if (e.key === "Enter") doBpSearch();
     });
 
-    // 服务器切换
+    // 载入服务端配置（刷新服务器列表 + 注入税率参数）
     // ★ 暴露为 cfgReady，供下面的档案加载链复用（保证只调一次）
-    var cfgReady = loadConfig().then(function (cfg) {
-      var sel = $("#serverSel");
-      sel.innerHTML = "";
-      S.servers.forEach(function (sv) {
-        sel.appendChild(el("button", {
-          class: sv.key === S.server ? "on" : "",
-          text: sv.short,
-          title: sv.label,
-          onclick: function () {
-            S.server = sv.key;
-            $$("#serverSel button").forEach(function (b) { b.classList.toggle("on", b.text === sv.short); });
-            renderChar();
-            renderSell();
-            renderIndustry();
-            if (S.page === "set") renderSet();
-          }
-        }));
-      });
-      // ★ 税率参数已由 loadConfig 从 /api/config 注入（含各服基准值与声望系数）
-      //   —— 此处不再重复 fetch tax_config.json：那会让整条链多一个失败点，
+    var cfgReady = loadConfig().then(function () {
+      // renderServerSelector() 已在 loadConfig 内按服务端列表重绘，
+      // 并保留用户当前选择 —— 这里不再重复绑定事件。
+      // ★ 税率参数也已由 loadConfig 从 /api/config 注入（含各服基准值与声望系数）
+      //   —— 不再重复 fetch tax_config.json：那会让整条链多一个失败点，
       //   且旧字段结构缺 servers 段，会把按服基准值冲掉。
     }).catch(function (e) {
-      toast("加载配置失败：" + e.message, "err");
+      // 失败不阻断：切换控件用的是内置兜底表，仍可正常切换三服
+      toast("加载配置失败（服务器切换仍可用内置列表）：" + e.message, "err");
     });
 
     // 加载角色档案
@@ -2369,9 +2479,13 @@
       return api("/api/profiles");
     }).then(function (j) {
       S.profiles = (j && j.profiles) || [];
-      if (S.profiles.length) {
-        // ★ 用本地档案恢复角色 —— 令牌过期后数据依然可用
-        restoreFromProfile(S.profiles[0]);
+      // ★ 只恢复「与当前选中服一致」的本地档案 —— 令牌过期后数据依然可用，
+      //   但三服数据不可混用：别服的技能/声望绝不能代入本服核算。
+      var same = S.profiles.filter(function (p) { return p.serverKey === S.server; })[0];
+      if (same) {
+        restoreFromProfile(same);
+      } else if (S.profiles.length) {
+        toast("当前服务器暂无角色档案；已保存的角色属于其他服，可切换服务器或在角色页重新授权", "err");
       }
       renderChar();
       renderSell();
