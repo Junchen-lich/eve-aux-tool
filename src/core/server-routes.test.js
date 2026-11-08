@@ -50,7 +50,16 @@ function startServer() {
     // 用一个大概率空闲的高位端口
     const proc = spawn(process.execPath, [path.join(ROOT, "server.js")], {
       cwd: ROOT,
-      env: Object.assign({}, process.env, { PORT: "18777", EVE_MULTI_USER: "0" }),
+      env: Object.assign({}, process.env, {
+        PORT: "18777",
+        EVE_MULTI_USER: "0",
+        // ★ 干净克隆里没有 用户数据/eve_config_v1.json，手动授权接口会
+        //   因「未配置 Client ID」返回 400。自检只验证链接生成逻辑，
+        //   注入占位 ID 使测试自包含：不联网、不使用任何真实凭据。
+        EVE_CLIENT_ID: "selftest-placeholder",
+        EVE_CLIENT_ID_CN: "selftest-placeholder",
+        EVE_CLIENT_ID_SG: "selftest-placeholder"
+      }),
       stdio: ["ignore", "pipe", "pipe"]
     });
     let buf = "";

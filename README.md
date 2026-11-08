@@ -90,7 +90,7 @@ node scripts/launch.js start --port 8660 --no-browser
 ├─ index.html               单页界面
 ├─ server.js                本地服务：静态托管 + SSO + ESI 代理 + 业务接口
 ├─ package.json             元信息与脚本（无依赖）
-├─ LICENSE                  GNU GPL v3.0 全文
+├─ LICENSE / NOTICE         GNU GPL v3.0 全文 / 版权与第三方声明
 ├─ scripts/
 │  └─ launch.js             启动器：菜单 / 端口探测 / 健康检查 / 进程管理
 ├─ src/core/                三服配置、ESI 客户端、PKCE 授权、角色档案、
@@ -150,7 +150,8 @@ npm test
 
 ## 许可证
 
-本项目采用 **GNU General Public License v3.0** 发布，完整条款见 [LICENSE](LICENSE)。
+本项目采用 **GNU General Public License v3.0** 发布，完整条款见 [LICENSE](LICENSE)，
+版权与授权声明见 [NOTICE](NOTICE)。
 
 > Copyright (C) 2026 Junchen-lich
 >
