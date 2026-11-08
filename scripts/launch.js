@@ -115,7 +115,8 @@ function checkAssets() {
   const sdeDir = path.join(ROOT, "data", "sde");
   if (!fs.existsSync(sdeDir) || fs.readdirSync(sdeDir).length === 0) {
     line(paint("yellow", "⚠ 内置数据表缺失（data/sde 为空）"));
-    line("  部分页面会不可用。可参考 docs/本地使用说明.md 重新构建数据表。");
+    line("  部分页面会不可用。数据表随发布仓库提供，请重新下载完整项目并覆盖 data/sde/。");
+    line("  详见 docs/本地使用说明.md。");
   }
 }
 

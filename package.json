@@ -1,18 +1,24 @@
 {
   "name": "eve-aux-tool",
   "version": "0.3.0",
-  "description": "EVE Online 辅助工具 —— 角色数据同步、技能参数、市场与工业核算",
+  "description": "EVE Online 辅助工具 —— 角色数据同步、技能参数、市场与工业核算（欧服 / 国服晨曦 / 国服曙光）",
   "main": "server.js",
-  "private": true,
   "license": "GPL-3.0",
+  "author": "Junchen-lich",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Junchen-lich/eve-aux-tool.git"
+  },
+  "homepage": "https://github.com/Junchen-lich/eve-aux-tool#readme",
+  "bugs": {
+    "url": "https://github.com/Junchen-lich/eve-aux-tool/issues"
+  },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node src/core/skills.test.js && node src/core/m2.test.js && node src/core/auth-callback.test.js && node src/core/skill-table.test.js && node src/core/tax-standing.test.js && node src/core/user-store.test.js && node src/core/server-routes.test.js && node src/data/store.test.js && node src/ui/calc-core.test.js && node src/ui/server-switch.test.js",
-    "test:online": "node src/core/esi-client.test.js && node src/data/fetcher.test.js && node src/core/m2-e2e.test.js && node src/ui/esi-contract.test.js",
-    "build": "node scripts/build_item_categories.js"
+    "test": "node src/core/skills.test.js && node src/core/m2.test.js && node src/core/auth-callback.test.js && node src/core/skill-table.test.js && node src/core/tax-standing.test.js && node src/core/user-store.test.js && node src/core/server-routes.test.js && node src/data/store.test.js && node src/ui/calc-core.test.js && node src/ui/server-switch.test.js"
   },
   "dependencies": {}
 }
