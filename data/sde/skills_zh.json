@@ -5,7 +5,7 @@
   "sources": [
     "国服 ESI https://ali-esi.evepc.163.com/latest/universe/types/{type_id} —— 官方英文名 + 完整效果描述（2026-11-04 逐项核对）",
     "everef.net/zh/types/{type_id} —— 国服官方中文技能名（2026-11-04 逐项核对）",
-    "国服玩家反馈（2026-11-04）—— 修正中文名：报关代码专家→海关操作专业理论、实验室操作→实验室运作理论、高级实验室技术→高级实验室运作理论"
+    "国服游戏内技能库（2026-11-04 用户核对）—— 中文名以国服客户端显示为准"
   ],
   "reviewTrigger": "① 用户反馈名称/效果与游戏内不符；② CCP 或网易版本公告提到技能变更；③ ESI 技能接口返回本表未收录的 skill_id（见 unmatched 机制）",
   "verifiedBy": {
@@ -179,8 +179,8 @@
   "aliasNotes": [
     "「提炼学概论 / 提炼效率理论」的官方英文名是 Reprocessing / Reprocessing Efficiency（SDE 旧名 Refining 已废弃），但国服沿用中文译名，因此英文名以 ESI 为准、中文名以国服为准。",
     "「科学原理」(Science, typeId 3402) 与「研究概论」(Research, typeId 3403) 是两个不同技能：前者加蓝图拷贝速度，后者减蓝图研究时间。「冶金学」(Metallurgy) 加的是材料效率研究速度 —— 三者常被混为一谈。",
-    "「海关操作专业理论」的官方英文名是 Customs Code Expertise（不是 Pi Customs，也不是 Customs Office）。",
-    "★ 原表中的「资源管理」(Resource Management) 已移除 —— 实测国服 ESI 类型表与 everef 国服技能库均**无此技能**，国服未实装（其「每设施额外制造槽」的效果在国服由「批量生产学 / 高级量产技术」承担）。若日后国服补上该技能，可按本表格式补入 typeId。",
+    "「海关操作专业理论」的官方英文名是 Customs Code Expertise。",
+    "「资源管理」(Resource Management) 国服未实装，不在本表中；其额外制造槽效果由「批量生产学 / 高级量产技术」承担。若日后国服上线该技能，可按本表格式补入 typeId。",
     "★ 手动填写技能面板与本表共用同一份数据 —— 面板里 14 项的 id 与本表 id 一致，保存后按 id 写回档案。"
   ]
 }

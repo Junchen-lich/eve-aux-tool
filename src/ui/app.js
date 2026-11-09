@@ -421,7 +421,7 @@
     var kv = el("div", { class: "kv" });
     [
       ["市场销售税", pct(eff.salesTax), "acc"],
-      ["经纪费（NPC 站）", pct(eff.brokerFee), "acc"],
+      ["中介费（NPC 站）", pct(eff.brokerFee), "acc"],
       ["制造时间系数", pct(eff.timeMult), ""],
       ["同时制造槽", eff.slots + " 个", ""],
       ["同时研究槽", eff.labSlots + " 个", ""],
@@ -1490,7 +1490,7 @@
         el("span", { class: "v", text: formatDuration(realTime) })
       ]));
       kv.appendChild(el("div", { class: "r" }, [
-        el("span", { class: "k", text: "销售税 / 经纪费" }),
+        el("span", { class: "k", text: "销售税 / 中介费" }),
         el("span", { class: "v", text: pct(tax) + " / " + pct(fee) })
       ]));
       if (rev) {
@@ -1620,7 +1620,7 @@
     var slots = window.EveCalc.manufacturingSlots(sk);
 
     body.appendChild(el("div", { class: "tip", html:
-      "当前税率取自你的角色技能：销售税 <b>" + pct(tax) + "</b>、经纪费 <b>" + pct(fee) +
+      "当前税率取自你的角色技能：销售税 <b>" + pct(tax) + "</b>、中介费 <b>" + pct(fee) +
       "</b>、同时制造槽 <b>" + slots + "</b> 个。" +
       (S.char ? "" : "<br>★ 尚未授权角色，税率按 0 级技能计算 —— 可在「角色」页授权后自动代入。")
     }));
@@ -1683,7 +1683,7 @@
         [
           ["毛收入", isk(rev.gross), ""],
           ["销售税", "−" + isk(rev.taxAmount), ""],
-          ["经纪费", "−" + isk(rev.feeAmount), ""],
+          ["中介费", "−" + isk(rev.feeAmount), ""],
           ["净收入", isk(rev.net), ""],
           ["总成本", isk(rev.cost), ""],
           ["净利润", isk(rev.profit), rev.profit >= 0 ? "pos" : "neg"],
@@ -2040,7 +2040,7 @@
       ["服务器", serverLabel(), ""],
       ["市场星域", regionName(), ""],
       ["销售税率", pct(taxRates.salesTax), "acc"],
-      ["经纪费率", pct(taxRates.brokerFee), "acc"],
+      ["中介费率", pct(taxRates.brokerFee), "acc"],
       ["制造槽 / 实验室槽", window.EveCalc.manufacturingSlots(effectiveSkills()) + " / " + window.EveCalc.labSlots(effectiveSkills()), ""]
     ].forEach(function (r) {
       kv.appendChild(el("div", { class: "r" }, [

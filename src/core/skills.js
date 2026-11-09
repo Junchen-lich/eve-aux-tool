@@ -290,7 +290,7 @@ function refineYieldBonusPct(skills) {
   return 3 * lv(skills, "refine") + 2 * lv(skills, "refining");
 }
 
-/** 行星工业 NPC 税（报关代码专家每级 -10%） */
+/** 行星工业 NPC 税（海关操作专业理论 Customs Code Expertise 每级 -10%） */
 function piTaxRate(skills) {
   return Math.max(0, TAX_BASE.piImportExportBase * (1 - TAX_BASE.piTaxPerLevel * lv(skills, "pi_customs")));
 }

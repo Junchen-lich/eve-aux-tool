@@ -55,26 +55,26 @@ section("【技能表是唯一来源】");
   ok(mapNames === skillsNames, "skill-map 与 skills 的技能集完全一致");
 }
 
-/* ---------------- 2. 国服中文名（用户反馈过的） ---------------- */
-section("【国服中文名（2026-11-04 用户反馈修正）】");
+/* ---------------- 2. 国服中文技能名 ---------------- */
+section("【国服中文技能名与英文对照】");
 {
   const byZh = {};
   SM.SKILL_TABLE.forEach(s => { byZh[s.nameZh] = s; });
 
-  ok(byZh["海关操作专业理论"], "报关代码专家 → 海关操作专业理论");
+  ok(byZh["海关操作专业理论"], "海关操作专业理论 已收录");
   ok(byZh["海关操作专业理论"].nameEn === "Customs Code Expertise",
-    "海关操作专业理论 的官方英文名是 Customs Code Expertise");
+    "海关操作专业理论 英文名 Customs Code Expertise");
   ok(byZh["海关操作专业理论"].typeId === 33467, "海关操作专业理论 typeID=33467");
 
-  ok(byZh["实验室运作理论"], "实验室操作 → 实验室运作理论");
+  ok(byZh["实验室运作理论"], "实验室运作理论 已收录");
   ok(byZh["实验室运作理论"].typeId === 3406, "实验室运作理论 typeID=3406");
-  ok(byZh["高级实验室运作理论"], "高级实验室技术 → 高级实验室运作理论");
+  ok(byZh["高级实验室运作理论"], "高级实验室运作理论 已收录");
   ok(byZh["高级实验室运作理论"].typeId === 24624, "高级实验室运作理论 typeID=24624");
 
-  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "报关代码专家"), "旧名「报关代码专家」已移除");
-  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "实验室操作"), "旧名「实验室操作」已移除");
-  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "高级实验室技术"), "旧名「高级实验室技术」已移除");
-  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "资源管理"), "旧名「资源管理」已移除（国服未实装）");
+  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "报关代码专家"), "技能表不含非国服译名（1）");
+  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "实验室操作"), "技能表不含非国服译名（2）");
+  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "高级实验室技术"), "技能表不含非国服译名（3）");
+  ok(!SM.SKILL_TABLE.some(s => s.nameZh === "资源管理"), "技能表不含国服未实装技能");
 }
 
 /* ---------------- 3. typeID 一致性 ---------------- */

@@ -91,7 +91,7 @@
   }
 
   /**
-   * 有效经纪费（NPC 站）：基础 − 0.3%×等级 − 0.03%×势力声望 − 0.02%×军团声望，下限 1%
+   * 有效中介费（NPC 站）：基础 − 0.3%×等级 − 0.03%×势力声望 − 0.02%×军团声望，下限 1%
    * 声望只取未经技能调整的原始值；负声望会提高费率。
    */
   function brokerFeeRate(skills, standing, serverKey) {
@@ -121,7 +121,7 @@
     };
   }
 
-  /** 玩家建筑的经纪费由业主设定，技能不影响 */
+  /** 玩家建筑的中介费由业主设定，技能不影响 */
   function brokerFeeRateStructure(skills, structureRate) {
     if (structureRate == null) return brokerFeeRate(skills);
     return structureRate;
